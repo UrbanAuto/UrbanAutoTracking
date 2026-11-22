@@ -1,0 +1,19 @@
+name = "urban-auto-tracking"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+preview_urls = false
+
+[vars]
+# chat_id груп, з яких бот приймає повідомлення (через кому). Дізнатися: надішліть /id в групі.
+ALLOWED_CHATS = ""
+# Адреса сайту трекера (для посилань клієнтам), GitHub Pages репозиторію
+SITE_URL = "https://urbanauto.github.io/UrbanAutoTracking"
+# З якого домену дозволено читати API (або "*")
+ALLOWED_ORIGIN = "https://urbanauto.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "urban-auto-tracking"
+database_id = "05a9d0af-39c6-486a-ac56-c84e0500da57"
+
+# Секрети (не в цьому файлі!):  wrangler secret put BOT_TOKEN   і   wrangler secret put WEBHOOK_SECRET

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex" />
+  <title>Urban Auto — Відстеження авто</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2339a0ff'/%3E%3Ctext x='16' y='23' font-family='Arial' font-weight='800' font-size='20' text-anchor='middle' fill='%2307122b'%3EU%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="brand-mark">U</span> Urban Auto</div>
+    <p class="tagline">Відстеження вашого авто</p>
+  </header>
+
+  <main class="wrap">
+    <!-- Вхід за кодом -->
+    <section class="card login hidden" id="loginView">
+      <h2>Введіть код відстеження</h2>
+      <p class="note">Код або посилання вам надіслав менеджер Urban Auto.</p>
+      <form id="loginForm" class="lotline">
+        <input id="codeInput" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Напр. K7M2X9PQ" maxlength="32" />
+        <button type="submit">Відкрити</button>
+      </form>
+      <p class="err hidden" id="loginErr"></p>
+    </section>
+
+    <!-- Кабінет -->
+    <div id="carView" class="hidden">
+      <section class="card hero">
+        <p class="demo hidden" id="demoBadge">Демо-дані — сервер ще не підключено</p>
+        <h1 id="carTitle"></h1>
+        <div class="chips" id="carChips"></div>
+        <div class="statusline">
+          <span class="status-now" id="statusNow"></span>
+          <span class="status-step" id="statusStep"></span>
+        </div>
+        <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="bar"><i id="barFill"></i></div>
+        <p class="upd" id="updated"></p>
+      </section>
+
+      <section class="card">
+        <h2>Етапи</h2>
+        <ol class="timeline" id="timeline"></ol>
+      </section>
+    </div>
+
+    <p class="foot hidden" id="loadErr"></p>
+  </main>
+
+  <div class="lightbox hidden" id="lightbox" role="dialog" aria-modal="true" aria-label="Фото">
+    <button type="button" class="lb-x" id="lbClose" aria-label="Закрити">×</button>
+    <button type="button" class="lb-nav lb-prev" id="lbPrev" aria-label="Попереднє">‹</button>
+    <img id="lbImg" alt="" />
+    <button type="button" class="lb-nav lb-next" id="lbNext" aria-label="Наступне">›</button>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/demo.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

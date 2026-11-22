@@ -136,7 +136,8 @@ function parseInfo(text) {
   const container = (text.match(CONTAINER_RE) || [])[1]?.replace(/[\s.,;]+$/, '').trim() || null;
   const orderId = (text.match(ORDER_RE) || [])[1] || null;
   const route = (text.match(ROUTE_RE) || [])[1]?.replace(/[\s.,;]+$/, '').trim() || null;
-  return { vin, lot, title, eventTs, signal, booking, container, orderId, route };
+  const captionLabel = (text.match(/[A-HJ-NPR-Z0-9]{17}_([^\n]+)/i) || [])[1]?.trim() || null;   // «VIN_Видача з терміналу» → «Видача з терміналу»
+  return { vin, lot, title, eventTs, signal, booking, container, orderId, route, captionLabel };
 }
 
 async function handleMessage(msg, env) {
@@ -160,7 +161,7 @@ async function handleMessage(msg, env) {
   }
 
   // 1) до якого авто належить повідомлення
-  const { vin, lot, title, eventTs, signal, booking, container, orderId, route } = parseInfo(text);
+  const { vin, lot, title, eventTs, signal, booking, container, orderId, route, captionLabel } = parseInfo(text);
   const photos = msg.photo?.length ? msg.photo : null;
   const photoId = photos ? photos[photos.length - 1].file_id : null;
   const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : null;
@@ -210,8 +211,8 @@ async function handleMessage(msg, env) {
   const ts = eventTs || (msg.forward_origin?.date || msg.date) * 1000;
   let added = false;
   if (stage) {
-    // те саме фото в цього авто вже є (переслали двічі) — не дублюємо
-    const dup = uid ? await env.DB.prepare('SELECT 1 AS x FROM events WHERE code = ?1 AND uid = ?2').bind(code, uid).first() : null;
+    // те саме фото в цьому ЕТАПІ цього авто вже є (переслали двічі) — не дублюємо. Те саме зображення в іншому етапі — окремий запис
+    const dup = uid ? await env.DB.prepare('SELECT 1 AS x FROM events WHERE code = ?1 AND uid = ?2 AND stage = ?3').bind(code, uid, stage).first() : null;
     if (!dup) {
       const r = await env.DB.prepare('INSERT OR IGNORE INTO events (code, stage, photo_id, thumb_id, uid, ts, chat_id, msg_id, group_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)')
         .bind(code, stage, photoId, thumbId, uid, ts, chatId, msg.message_id, msg.media_group_id || null).run();
@@ -229,14 +230,16 @@ async function handleMessage(msg, env) {
   const silentPhoto = photoId && msg.media_group_id && !text;
   if (silentPhoto) return;
   const info = booking || container || route;
+  // фото з підписом «VIN_Назва етапу», який бот не знає: фото потрапляє в останній етап, але про це попереджаємо
+  const unknownLabel = photoId && captionLabel && !detectStage(signal) ? captionLabel : null;
   if (!stage && !info && !created && !(vin || lot)) return;
-  if (stage && !added && !created && !info) return; // дубль того, що вже збережено
-  await notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unrecognized: !stage && !info && (vin || lot) });
+  if (stage && !added && !created && !info && !unknownLabel) return; // дубль того, що вже збережено
+  await notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unknownLabel, unrecognized: !stage && !info && (vin || lot) });
 }
 
 const fmtDate = (ts) => new Date(ts).toLocaleDateString('uk-UA', { timeZone: 'Europe/Kyiv' });
 
-async function notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unrecognized }) {
+async function notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unknownLabel, unrecognized }) {
   const car = await env.DB.prepare('SELECT title, vin, lot, booking FROM cars WHERE code = ?1').bind(code).first();
   const lines = [created ? '🆕 Створено картку авто' : '✅ Додано в трекер', `🚗 ${car.title}`];
   if (car.vin) lines.push(`VIN: ${car.vin}`);
@@ -254,14 +257,15 @@ async function notify(env, msg, { code, created, stage, ts, booking, container, 
   if (route) lines.push(`🧭 Маршрут: ${route}`);
   if (container) lines.push(`📦 Контейнер: ${container}`);
   if (booking) lines.push(`🗒️ Букінг: ${booking}`);
+  if (unknownLabel) lines.push(`⚠️ Етап «${unknownLabel}» не розпізнано — фото додано до етапу ${stage}/${STAGES.length}. Скажіть, до якого етапу це відносити.`);
   if (unrecognized) lines.push('⚠️ Етап у повідомленні не розпізнано — додайте вручну: /stage 1…' + STAGES.length);
   lines.push(`🔗 ${clientLink(env, code)}`);
   await reply(env, msg, lines.join('\n'));
 }
 
-// Прибирає дублі фото однієї картки (однакові file_unique_id) — лишається найраніше збережене
+// Прибирає дублі фото в межах етапу однієї картки (однакові file_unique_id) — лишається найраніше збережене
 async function dedupePhotos(env, code) {
-  await env.DB.prepare('DELETE FROM events WHERE code = ?1 AND uid IS NOT NULL AND id NOT IN (SELECT MIN(id) FROM events WHERE code = ?1 AND uid IS NOT NULL GROUP BY uid)').bind(code).run();
+  await env.DB.prepare('DELETE FROM events WHERE code = ?1 AND uid IS NOT NULL AND id NOT IN (SELECT MIN(id) FROM events WHERE code = ?1 AND uid IS NOT NULL GROUP BY uid, stage)').bind(code).run();
 }
 
 // Фото без підпису прийшло раніше, ніж ми дізналися, чиє авто: зберігаємо в буфері (code = '').

@@ -6,6 +6,7 @@
 // Дублі відсікає UNIQUE(chat_id, msg_id), тому повторний запуск безпечний.
 //
 // Запуск:  node tools/backfill.mjs [від] [до]
+//   node tools/backfill.mjs 354 355 --notify   — те саме, але бот надішле в групу сповіщення «Додано в трекер»
 //   потрібні BOT_TOKEN і WEBHOOK_SECRET (беруться з worker/.secrets.env), GROUP_ID, OWNER_ID, WORKER_URL.
 import fs from 'node:fs';
 
@@ -16,7 +17,9 @@ const WORKER = process.env.WORKER_URL || 'https://urban-auto-tracking.urbanauto6
 const GROUP = Number(process.env.GROUP_ID || -1004492547641);   // група з авто
 const OWNER = Number(process.env.OWNER_ID || 602387747);        // особистий чат власника (сюди тимчасово пересилаємо)
 const BOT_ID = Number(BOT_TOKEN.split(':')[0]);
-const from = +process.argv[2] || 1, to = +process.argv[3] || 400;
+const NOTIFY = process.argv.includes('--notify');   // не «тихий» режим: бот надішле в групу сповіщення про додане
+const nums = process.argv.slice(2).filter((a) => /^\d+$/.test(a));
+const from = +nums[0] || 1, to = +nums[1] || 400;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function tg(method, body) {
@@ -43,7 +46,7 @@ for (let id = from; id <= to; id++) {
   if (senderId === BOT_ID || senderId === OWNER || text.startsWith('/')) { skipped++; continue; }
 
   const update = {
-    update_id: 8_000_000 + id, backfill: true, backfill_reset: ok === 0,
+    update_id: 8_000_000 + id, ...(NOTIFY ? {} : { backfill: true, backfill_reset: ok === 0 }),
     message: {
       message_id: id, date: origin.date || f.date, chat: { id: GROUP, type: 'supergroup' },
       from: { id: senderId || 0, is_bot: true }, text: f.text, caption: f.caption, photo: f.photo,

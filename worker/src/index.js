@@ -143,7 +143,12 @@ async function handleMessage(msg, env) {
   const allowed = (env.ALLOWED_CHATS || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!allowed.includes(chatId)) return; // чужі чати ігноруємо
 
-  if (text.startsWith('/')) return handleCommand(msg, text, ctxKey, env);
+  if (text.startsWith('/')) {
+    // Команди, адресовані іншим ботам (напр. /start@cargoplus_notify_bot), не наші — мовчимо
+    const target = (text.match(/^\/\w+@(\w+)/) || [])[1];
+    if (target && target.toLowerCase() !== (env.BOT_USERNAME || 'urbanauto_tracking_bot').toLowerCase()) return;
+    return handleCommand(msg, text, ctxKey, env);
+  }
 
   // 1) до якого авто належить повідомлення
   const { vin, lot, title, eventTs, signal } = parseInfo(text);

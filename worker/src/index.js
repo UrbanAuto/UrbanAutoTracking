@@ -106,14 +106,14 @@ async function webhook(req, env) {
   if (env.WEBHOOK_SECRET && req.headers.get('x-telegram-bot-api-secret-token') !== env.WEBHOOK_SECRET)
     return new Response('forbidden', { status: 403 });
   const update = await req.json();
-  const msg = update.message || update.channel_post;
+  const msg = update.message || update.channel_post || update.business_message; // business_message — режим «Секретар» (чат з ботом CargoPlus)
   if (msg) {
     try { await handleMessage(msg, env); } catch (e) { console.error('handleMessage', e); }
   }
   return new Response('ok'); // завжди 200, щоб Telegram не повторював «биті» повідомлення
 }
 
-const reply = (env, msg, text) =>
+const reply = (env, msg, text) => msg.business_connection_id ? null : // у чужому бізнес-чаті від імені бота нічого не пишемо
   tg(env, 'sendMessage', { chat_id: msg.chat.id, text, message_thread_id: msg.message_thread_id, reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } }).catch(console.error);
 
 // Розбір повідомлення: VIN, назва авто, дата події, «сигнал» для визначення етапу.
@@ -133,6 +133,8 @@ function parseInfo(text) {
 async function handleMessage(msg, env) {
   const chatId = String(msg.chat.id);
   const text = (msg.text || msg.caption || '').trim();
+  // Бізнес-чат (режим «Секретар»): беремо лише вхідні від співрозмовника, без команд
+  if (msg.business_connection_id && (msg.from?.id !== msg.chat.id || text.startsWith('/'))) return;
   const ctxKey = `${chatId}:${msg.message_thread_id || 0}`;
 
   // /id працює скрізь — щоб дізнатися chat_id групи для ALLOWED_CHATS

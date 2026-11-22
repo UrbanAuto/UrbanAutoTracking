@@ -48,6 +48,10 @@
       const c = el('span', 'chip', k + ' '); c.appendChild(el('b', null, v)); chips.appendChild(c);
     }
 
+    // Букінг — окремий блок зліва, під назвою авто
+    $('bookingBox').classList.toggle('hidden', !car.booking);
+    $('bookingVal').textContent = car.booking || '';
+
     const total = car.stages.length;
     const cur = car.stages.find((s) => s.id === car.current);
     $('statusNow').textContent = cur ? cur.title : 'Очікуємо оновлення';

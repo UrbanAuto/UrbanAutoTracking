@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS cars (
   code TEXT PRIMARY KEY,          -- секретний код клієнта (у посиланні)
   vin TEXT UNIQUE,
   lot TEXT,
+  booking TEXT,                   -- номер/інформація про букінг контейнера
   title TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );

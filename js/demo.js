@@ -1,16 +1,16 @@
 // Демо-дані для перегляду вигляду без сервера (?demo або порожній API_URL).
 (function () {
   const day = 86400000, now = Date.now();
-  const titles = ['Авто призначено', 'Авто на складі в США', 'Завантажено в контейнер', 'В дорозі морем',
-    'Прибуло в порт', 'Розформування контейнера', 'Прямує до терміналу', 'Готове до видачі'];
-  const photos = [1, 2, 3, 0, 1, 12, 0, 0];
+  const titles = ['Викуплено з Аукціону', 'Отримання з аукціону', 'Доставка', 'Майданчик',
+    'Завантаження в контейнер', 'Розформування контейнера'];
+  const photos = [1, 2, 3, 12, 2, 0];
   window.DEMO_CAR = {
-    code: 'DEMO2024', title: 'Honda Accord 2020', vin: '1HGCV1F30LA012345', lot: '48213907',
-    current: 6, updated: now - 2 * day,
+    code: 'DEMO2024', title: 'Honda Accord 2020', vin: '1HGCV1F30LA012345', lot: '48213907', booking: 'MSKU 1234567',
+    current: 5, updated: now - 2 * day,
     stages: titles.map((t, i) => ({
       id: i + 1, title: t,
-      date: i < 6 ? now - (22 - i * 3.6) * day : (i === 6 ? now + 2 * day : null),
-      planned: i === 6,
+      date: i < 5 ? now - (22 - i * 4.4) * day : now + 2 * day,
+      planned: i === 5,
       photos: Array.from({ length: photos[i] }, (_, k) => 'demo-' + (i + 1) + '-' + (k + 1)),
     })),
   };

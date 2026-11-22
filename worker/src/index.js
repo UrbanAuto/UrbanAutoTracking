@@ -145,6 +145,9 @@ async function handleMessage(msg, env) {
 
   // 1) до якого авто належить повідомлення
   const { vin, lot, title, eventTs, signal } = parseInfo(text);
+  const photos = msg.photo?.length ? msg.photo : null;
+  const photoId = photos ? photos[photos.length - 1].file_id : null;
+  const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : null;
   let code = null, groupEvent = null;
 
   if (vin) code = (await env.DB.prepare('SELECT code FROM cars WHERE vin = ?1').bind(vin).first())?.code;
@@ -158,19 +161,19 @@ async function handleMessage(msg, env) {
     code = (await env.DB.prepare('SELECT code FROM events WHERE chat_id = ?1 AND msg_id = ?2').bind(chatId, msg.reply_to_message.message_id).first())?.code;
   }
   if (!code) code = (await env.DB.prepare('SELECT code FROM ctx WHERE key = ?1').bind(ctxKey).first())?.code;
+  if (!code && photoId) code = await bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId);
   if (!code) return; // не знаємо, чиє авто — ігноруємо
   await env.DB.prepare('INSERT INTO ctx (key, code) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET code = ?2').bind(ctxKey, code).run();
   // назва з повідомлення краща за заглушку «VIN …»
   if (title) await env.DB.prepare("UPDATE cars SET title = ?1 WHERE code = ?2 AND (title LIKE 'VIN %' OR title LIKE 'Лот %')").bind(title, code).run();
 
   // 2) який етап
-  const photos = msg.photo?.length ? msg.photo : null;
-  const photoId = photos ? photos[photos.length - 1].file_id : null;
-  const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : null;
   let stage = detectStage(signal) || groupEvent?.stage;
   if (!stage && photoId) {
     // фото без підпису (наступні альбоми) — в етап останньої події цього авто
-    stage = (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 ORDER BY id DESC LIMIT 1').bind(code).first())?.stage || 1;
+    stage = (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 ORDER BY id DESC LIMIT 1').bind(code).first())?.stage;
+    // у авто ще немає жодної події (фото обігнало підписаний альбом) — тримаємо в буфері
+    if (!stage) return void await bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId);
   }
   if (!stage) return;
 
@@ -178,6 +181,25 @@ async function handleMessage(msg, env) {
   const ts = eventTs || (msg.forward_origin?.date || msg.date) * 1000;
   await env.DB.prepare('INSERT OR IGNORE INTO events (code, stage, photo_id, thumb_id, ts, chat_id, msg_id, group_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)')
     .bind(code, stage, photoId, thumbId, ts, chatId, msg.message_id, msg.media_group_id || null).run();
+  // Повідомлення з VIN/лотом «забирає» фото, що прийшли трохи раніше й чекали в буфері (пересилання йде паралельно)
+  if ((vin || lot) && photoId) { // забирає лише підписаний альбом: фото належать його етапу, а не статусу з окремого тексту
+    await env.DB.prepare("UPDATE events SET code = ?1, stage = ?2 WHERE code = '' AND chat_id = ?3 AND recv >= ?4")
+      .bind(code, stage, chatId, Date.now() - 10 * 60 * 1000).run();
+  }
+}
+
+// Фото без підпису прийшло раніше, ніж ми дізналися, чиє авто: зберігаємо в буфері (code = '').
+// Після вставки перевіряємо контекст ще раз — він міг з'явитися, поки ми писали в базу.
+async function bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId) {
+  const ts = (msg.forward_origin?.date || msg.date) * 1000;
+  await env.DB.prepare("INSERT OR IGNORE INTO events (code, stage, photo_id, thumb_id, ts, chat_id, msg_id, group_id, recv) VALUES ('',0,?1,?2,?3,?4,?5,?6,?7)")
+    .bind(photoId, thumbId, ts, chatId, msg.message_id, msg.media_group_id || null, Date.now()).run();
+  const code = (await env.DB.prepare('SELECT code FROM ctx WHERE key = ?1').bind(ctxKey).first())?.code;
+  if (!code) return null;
+  const stage = (await env.DB.prepare("SELECT stage FROM events WHERE code = ?1 AND photo_id IS NOT NULL ORDER BY id DESC LIMIT 1").bind(code).first())?.stage;
+  // У авто ще немає жодного фото-етапу — лишаємо в буфері, його забере підписаний альбом
+  if (stage) await env.DB.prepare("UPDATE events SET code = ?1, stage = ?2 WHERE code = '' AND chat_id = ?3 AND msg_id = ?4").bind(code, stage, chatId, msg.message_id).run();
+  return null; // фото вже збережено; далі обробляти нічого
 }
 
 function detectStage(text) {
@@ -193,8 +215,14 @@ function detectStage(text) {
 
 async function createCar(env, { vin, lot, title }, msg) {
   const code = newCode();
-  await env.DB.prepare('INSERT INTO cars (code, vin, lot, title, created_at) VALUES (?1,?2,?3,?4,?5)')
+  const r = await env.DB.prepare('INSERT OR IGNORE INTO cars (code, vin, lot, title, created_at) VALUES (?1,?2,?3,?4,?5)')
     .bind(code, vin || null, lot || null, title, Date.now()).run();
+  if (!r.meta?.changes) {
+    // паралельне повідомлення з тим самим VIN уже створило картку — беремо її
+    const row = vin ? await env.DB.prepare('SELECT code FROM cars WHERE vin = ?1').bind(vin).first() : null;
+    if (row) return row.code;
+    throw new Error('createCar: insert ignored, car not found');
+  }
   await reply(env, msg, `✅ Створено картку авто «${title}»\nПосилання для клієнта: ${clientLink(env, code)}`);
   return code;
 }

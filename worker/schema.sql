@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS events (
   chat_id TEXT,
   msg_id INTEGER,
   group_id TEXT,                  -- media_group_id альбому
+  recv INTEGER,                   -- коли отримано (лише для фото в буфері, code = '')
   UNIQUE (chat_id, msg_id)
 );
 CREATE INDEX IF NOT EXISTS events_code ON events (code);

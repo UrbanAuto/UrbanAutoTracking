@@ -48,7 +48,7 @@ export default {
 };
 
 /* ───────────── допоміжне ───────────── */
-const cors = (env) => ({ 'access-control-allow-origin': env.ALLOWED_ORIGIN || '*', 'access-control-allow-methods': 'GET,DELETE,OPTIONS', 'access-control-allow-headers': 'authorization,content-type', 'access-control-max-age': '600' });
+const cors = (env) => ({ 'access-control-allow-origin': env.ALLOWED_ORIGIN || '*', 'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS', 'access-control-allow-headers': 'authorization,content-type', 'access-control-max-age': '600' });
 const json = (env, data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...cors(env) } });
 
@@ -151,6 +151,7 @@ async function admin(req, env, url) {
     const stmts = [
       env.DB.prepare('DELETE FROM events WHERE code = ?1').bind(code),
       env.DB.prepare('DELETE FROM ctx WHERE code = ?1').bind(code),
+      env.DB.prepare('DELETE FROM push_group_cars WHERE code = ?1').bind(code),
       env.DB.prepare('DELETE FROM cars WHERE code = ?1').bind(code),
     ];
     if (url.searchParams.get('block') === '1') {
@@ -174,6 +175,48 @@ async function admin(req, env, url) {
     await env.DB.prepare('DELETE FROM blocked WHERE key = ?1').bind(decodeURIComponent(m[1])).run();
     return json(env, { ok: true });
   }
+  // ── групи для пуш-сповіщень ──
+  if (req.method === 'GET' && path === '/groups') {
+    const { results } = await env.DB.prepare('SELECT chat_id, title, type, status, scope, last_error, created_at FROM push_groups ORDER BY created_at DESC').all();
+    const { results: links } = await env.DB.prepare('SELECT chat_id, code FROM push_group_cars').all();
+    return json(env, { groups: results.map((g) => ({ ...g, cars: links.filter((l) => l.chat_id === g.chat_id).map((l) => l.code) })) });
+  }
+  if (req.method === 'POST' && path === '/groups') {
+    let body; try { body = await req.json(); } catch { return json(env, { error: 'bad_json' }, 400); }
+    const id = String(body.chat_id || '').trim();
+    if (!/^-?\d{5,20}$/.test(id)) return json(env, { error: 'bad_chat_id' }, 400);
+    let chat; try { chat = await tg(env, 'getChat', { chat_id: id }); } catch (e) { return json(env, { error: 'bot_not_in_chat', detail: String(e).slice(0, 160) }, 400); }
+    await env.DB.prepare("INSERT INTO push_groups (chat_id, title, type, status, scope, created_at) VALUES (?1,?2,?3,'active','cars',?4) ON CONFLICT(chat_id) DO UPDATE SET title = ?2, type = ?3, status = 'active', last_error = NULL")
+      .bind(id, chat.title || chat.username || id, chat.type, Date.now()).run();
+    return json(env, { ok: true, chat_id: id, title: chat.title || id });
+  }
+  if ((m = path.match(/^\/groups\/(-?\d{5,20})$/))) {
+    const id = m[1];
+    if (req.method === 'PUT') {
+      let body; try { body = await req.json(); } catch { return json(env, { error: 'bad_json' }, 400); }
+      const g = await env.DB.prepare('SELECT chat_id FROM push_groups WHERE chat_id = ?1').bind(id).first();
+      if (!g) return json(env, { error: 'not_found' }, 404);
+      const stmts = [];
+      if (['active', 'disabled'].includes(body.status)) stmts.push(env.DB.prepare('UPDATE push_groups SET status = ?2, last_error = NULL WHERE chat_id = ?1').bind(id, body.status));
+      if (['all', 'cars'].includes(body.scope)) stmts.push(env.DB.prepare('UPDATE push_groups SET scope = ?2 WHERE chat_id = ?1').bind(id, body.scope));
+      if (Array.isArray(body.cars)) {
+        stmts.push(env.DB.prepare('DELETE FROM push_group_cars WHERE chat_id = ?1').bind(id));
+        for (const c of [...new Set(body.cars.map((x) => String(x).toUpperCase()).filter((x) => /^[A-Z0-9]{6,32}$/.test(x)))])
+          stmts.push(env.DB.prepare('INSERT OR IGNORE INTO push_group_cars (chat_id, code) SELECT ?1, code FROM cars WHERE code = ?2').bind(id, c));
+      }
+      if (stmts.length) await env.DB.batch(stmts);
+      return json(env, { ok: true });
+    }
+    if (req.method === 'DELETE') {
+      await env.DB.batch([env.DB.prepare('DELETE FROM push_group_cars WHERE chat_id = ?1').bind(id), env.DB.prepare('DELETE FROM push_groups WHERE chat_id = ?1').bind(id)]);
+      if (url.searchParams.get('leave') === '1') { try { await tg(env, 'leaveChat', { chat_id: id }); } catch (e) { /* вже поза групою */ } }
+      return json(env, { ok: true });
+    }
+  }
+  if (req.method === 'POST' && (m = path.match(/^\/groups\/(-?\d{5,20})\/test$/))) {
+    try { await tg(env, 'sendMessage', { chat_id: m[1], text: '✅ Тестове сповіщення Urban Auto Tracking.\nЦя група підключена: сюди надходитимуть оновлення по авто.' }); return json(env, { ok: true }); }
+    catch (e) { return json(env, { ok: false, error: String(e).slice(0, 200) }, 200); }
+  }
   return json(env, { error: 'not_found' }, 404);
 }
 
@@ -183,7 +226,30 @@ async function webhook(req, env) {
     return new Response('forbidden', { status: 403 });
   let update;
   try { update = await req.json(); } catch { return new Response('bad request', { status: 400 }); }
+  // Бота додали/видалили з групи або каналу → група з'являється в адмінці (статус «pending»: пуші не йдуть, доки власник не підтвердить)
+  const mc = update.my_chat_member;
+  if (mc && ['group', 'supergroup', 'channel'].includes(mc.chat?.type)) {
+    try {
+      const st = mc.new_chat_member?.status, id = String(mc.chat.id);
+      if (st === 'member' || st === 'administrator') {
+        await env.DB.prepare("INSERT INTO push_groups (chat_id, title, type, status, scope, created_at) VALUES (?1,?2,?3,'pending','cars',?4) ON CONFLICT(chat_id) DO UPDATE SET title = ?2, type = ?3, last_error = NULL, status = CASE WHEN status = 'error' THEN 'active' ELSE status END")
+          .bind(id, mc.chat.title || id, mc.chat.type, Date.now()).run();
+      } else if (st === 'left' || st === 'kicked') {
+        await env.DB.prepare("UPDATE push_groups SET status = 'error', last_error = 'бота видалено з групи' WHERE chat_id = ?1").bind(id).run();
+      }
+    } catch (e) { console.error('my_chat_member', e); }
+  }
   const msg = update.message || update.channel_post || update.business_message; // business_message — режим «Секретар» (чат з ботом CargoPlus)
+  // група стала супергрупою — переносимо підключення на новий chat_id
+  if (msg?.migrate_to_chat_id) {
+    try {
+      const o = String(msg.chat.id), n = String(msg.migrate_to_chat_id);
+      await env.DB.batch([
+        env.DB.prepare('UPDATE push_groups SET chat_id = ?2 WHERE chat_id = ?1').bind(o, n),
+        env.DB.prepare('UPDATE push_group_cars SET chat_id = ?2 WHERE chat_id = ?1').bind(o, n),
+      ]);
+    } catch (e) { console.error('migrate', e); }
+  }
   if (msg && update.backfill) msg.__quiet = true; // імпорт історії (tools/backfill.mjs): без сповіщень у чат
   if (update.backfill_reset && msg) await env.DB.prepare("DELETE FROM ctx WHERE key LIKE ?1").bind(`${msg.chat.id}:%`).run(); // старт імпорту — без застарілого «поточного авто»
   if (msg) {
@@ -372,6 +438,31 @@ async function notify(env, msg, { code, created, stage, ts, booking, container, 
   if (unrecognized) lines.push('⚠️ Етап у повідомленні не розпізнано — додайте вручну: /stage 1…' + STAGES.length);
   lines.push(`🔗 ${clientLink(env, code)}`);
   await reply(env, msg, lines.join('\n'));
+  // Пуш у підключені групи (крім групи-джерела, яка вже отримала відповідь, і крім імпорту історії та попереджень)
+  if (!msg.__quiet && !unrecognized) await pushToGroups(env, String(msg.chat.id), code, lines.filter((l) => !l.startsWith('⚠️')).join('\n'), photoId);
+}
+
+/* ───────────── пуш у підключені групи ───────────── */
+// Групи додаються в адмін-панелі (або з'являються там зі статусом «pending», коли бота додають у групу).
+// Група отримує сповіщення про всі авто (scope = all) або лише про вибрані (push_group_cars).
+async function pushToGroups(env, sourceChatId, code, text, photoId) {
+  const { results } = await env.DB.prepare(`
+    SELECT g.chat_id FROM push_groups g
+    WHERE g.status = 'active' AND g.chat_id <> ?1
+      AND (g.scope = 'all' OR EXISTS (SELECT 1 FROM push_group_cars gc WHERE gc.chat_id = g.chat_id AND gc.code = ?2))`).bind(sourceChatId, code).all();
+  for (const { chat_id } of results) {
+    try {
+      let sent = false;
+      if (photoId && text.length <= 1000) {
+        try { await tg(env, 'sendPhoto', { chat_id, photo: photoId, caption: text }); sent = true; } catch (e) { /* напр. файл-зображення — шлемо текстом */ }
+      }
+      if (!sent) await tg(env, 'sendMessage', { chat_id, text, disable_web_page_preview: true });
+    } catch (e) {
+      console.error('push', chat_id, String(e));
+      // бота видалили з групи / група не існує — позначаємо, щоб це було видно в адмінці
+      await env.DB.prepare("UPDATE push_groups SET status = 'error', last_error = ?2 WHERE chat_id = ?1").bind(chat_id, String(e).slice(0, 200)).run();
+    }
+  }
 }
 
 // Фото, що понад 45 секунд чекали в буфері (підписаний альбом так і не прийшов), прикріплюємо до «поточного» авто їхнього чату

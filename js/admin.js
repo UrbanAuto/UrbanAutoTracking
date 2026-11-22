@@ -16,7 +16,7 @@
   function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 2600); }
 
   async function api(path, opt = {}) {
-    const r = await fetch(API + '/admin/api' + path, { ...opt, headers: { authorization: 'Bearer ' + token } });
+    const r = await fetch(API + '/admin/api' + path, { ...opt, headers: { authorization: 'Bearer ' + token, ...(opt.headers || {}) } });
     if (r.status === 401) { const e = new Error('unauthorized'); e.code = 401; throw e; }
     if (!r.ok) throw new Error('http_' + r.status);
     return r.json();
@@ -31,7 +31,7 @@
     try {
       data = await api('/cars');
       $('loginView').classList.add('hidden'); $('panel').classList.remove('hidden'); $('loadErr').classList.add('hidden');
-      render(); loadBlocked();
+      render(); loadBlocked(); loadGroups();
     } catch (e) {
       if (e.code === 401) { store.clear(); token = ''; showLogin('Невірний токен.'); }
       else { $('loadErr').textContent = 'Не вдалося завантажити дані. Спробуйте ще раз.'; $('loadErr').classList.remove('hidden'); }
@@ -125,8 +125,9 @@
   }
 
   /* ── підтвердження ── */
-  function ask({ title, text, block, onYes }) {
+  function ask({ title, text, block, blockLabel, onYes }) {
     $('confirmTitle').textContent = title; $('confirmText').textContent = text;
+    $('blockLabel').textContent = blockLabel || 'Не додавати це авто знову (ігнорувати повідомлення з цим VIN)';
     $('blockRow').classList.toggle('hidden', !block); $('blockChk').checked = false;
     pending = onYes; $('confirm').classList.remove('hidden');
   }
@@ -145,6 +146,99 @@
   });
   $('detailClose').addEventListener('click', () => $('detail').classList.add('hidden'));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('confirm').classList.add('hidden'); $('detail').classList.add('hidden'); } });
+
+
+  /* ── групи сповіщень ── */
+  let groups = [];
+  const STATUS = { active: 'Активна', pending: 'Очікує підтвердження', disabled: 'Вимкнена', error: 'Помилка' };
+
+  function setTab(name) {
+    for (const t of document.querySelectorAll('#tabs .tab')) t.classList.toggle('on', t.dataset.tab === name);
+    $('carsWrap').classList.toggle('hidden', name !== 'cars'); $('groupsWrap').classList.toggle('hidden', name !== 'groups');
+    if (name === 'groups') loadGroups();
+  }
+  $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab'); if (b) setTab(b.dataset.tab); });
+
+  async function loadGroups() {
+    try { groups = (await api('/groups')).groups; } catch (e) { return; }
+    const pend = groups.filter((g) => g.status === 'pending').length;
+    const bd = $('pendingBadge'); bd.textContent = pend; bd.classList.toggle('hidden', !pend);
+    renderGroups();
+  }
+
+  function renderGroups() {
+    const box = $('groups'); box.textContent = '';
+    if (!groups.length) { box.appendChild(el('div', 'card empty', 'Груп ще немає. Додайте бота в групу — вона з’явиться тут.')); return; }
+    for (const g of groups) {
+      const card = el('article', 'car'); const head = el('div', 'car-head'); const left = el('div');
+      left.appendChild(el('h3', null, g.title || g.chat_id));
+      left.appendChild(el('div', 'sub', 'chat_id ' + g.chat_id));
+      head.appendChild(left); head.appendChild(el('span', 'chip ' + g.status, STATUS[g.status] || g.status)); card.appendChild(head);
+      card.appendChild(el('div', 'sub', g.scope === 'all' ? 'Надсилає сповіщення по всіх авто' : `Вибрані авто: ${g.cars.length}`));
+      if (g.last_error) card.appendChild(el('div', 'err-line', g.last_error));
+      const act = el('div', 'car-act');
+      const cfg = el('button', 'btn sm', g.status === 'pending' ? 'Налаштувати й підключити' : 'Налаштувати'); cfg.type = 'button'; cfg.addEventListener('click', () => openGroup(g)); act.appendChild(cfg);
+      const test = el('button', 'btn sm', 'Тест'); test.type = 'button'; test.addEventListener('click', () => testGroup(g)); act.appendChild(test);
+      const del = el('button', 'btn sm danger', 'Видалити'); del.type = 'button'; del.addEventListener('click', () => askDeleteGroup(g)); act.appendChild(del);
+      card.appendChild(act); box.appendChild(card);
+    }
+  }
+
+  let editing = null;
+  function openGroup(g) {
+    editing = g;
+    $('groupTitle').textContent = g.title || g.chat_id;
+    $('groupMeta').textContent = `chat_id ${g.chat_id} · ${STATUS[g.status] || g.status}`;
+    $('gActive').checked = g.status === 'active' || g.status === 'pending' ? g.status === 'active' : false;
+    if (g.status === 'pending') $('gActive').checked = true; // «Налаштувати й підключити» — одразу вмикаємо
+    for (const r of document.getElementsByName('gScope')) r.checked = r.value === g.scope;
+    $('gCarsSearch').value = ''; renderCarChecks(new Set(g.cars));
+    $('groupModal').classList.remove('hidden');
+  }
+  function renderCarChecks(selected) {
+    const q = $('gCarsSearch').value.trim().toLowerCase(); const box = $('gCars'); box.textContent = '';
+    const all = document.querySelector('input[name=gScope][value=all]').checked; box.classList.toggle('off', all);
+    for (const c of (data ? data.cars : [])) {
+      if (q && ![c.title, c.vin, c.code].some((v) => v && String(v).toLowerCase().includes(q))) continue;
+      const lab = el('label'); const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = c.code; cb.checked = selected.has(c.code);
+      cb.addEventListener('change', () => { cb.checked ? selected.add(c.code) : selected.delete(c.code); });
+      lab.appendChild(cb); const t = el('span', null, c.title + ' '); t.appendChild(el('small', null, c.vin || c.code)); lab.appendChild(t); box.appendChild(lab);
+    }
+    if (!box.childNodes.length) box.appendChild(el('div', 'empty', 'Авто не знайдено'));
+    renderCarChecks.sel = selected;
+  }
+  $('gCarsSearch').addEventListener('input', () => renderCarChecks(renderCarChecks.sel || new Set()));
+  for (const r of document.getElementsByName('gScope')) r.addEventListener('change', () => renderCarChecks(renderCarChecks.sel || new Set()));
+  $('groupCancel').addEventListener('click', () => $('groupModal').classList.add('hidden'));
+  $('groupClose').addEventListener('click', () => $('groupModal').classList.add('hidden'));
+  $('groupSave').addEventListener('click', async () => {
+    if (!editing) return;
+    const scope = document.querySelector('input[name=gScope]:checked')?.value || 'cars';
+    const cars = [...(renderCarChecks.sel || [])];
+    if ($('gActive').checked && scope === 'cars' && !cars.length) return toast('Оберіть хоча б одне авто або «Усі авто»');
+    try {
+      await api('/groups/' + editing.chat_id, { method: 'PUT', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: JSON.stringify({ status: $('gActive').checked ? 'active' : 'disabled', scope, cars }) });
+      $('groupModal').classList.add('hidden'); toast('Збережено'); loadGroups();
+    } catch (e) { toast('Не вдалося зберегти'); }
+  });
+
+  async function testGroup(g) {
+    try { const r = await api(`/groups/${g.chat_id}/test`, { method: 'POST' }); toast(r.ok ? 'Тестове сповіщення надіслано' : 'Не вдалося: ' + (r.error || '')); } catch (e) { toast('Не вдалося надіслати'); }
+  }
+  function askDeleteGroup(g) {
+    ask({ title: `Видалити групу «${g.title || g.chat_id}»?`, text: 'Сповіщення в цю групу припиняться. Сама група в Telegram не видаляється.', block: true, blockLabel: 'Також вийти бота з цієї групи',
+      onYes: async () => { await api(`/groups/${g.chat_id}?leave=${$('blockChk').checked ? 1 : 0}`, { method: 'DELETE' }); toast('Групу видалено'); loadGroups(); } });
+  }
+  $('groupAddForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); const id = $('groupIdInput').value.trim(); if (!id) return;
+    try {
+      const r = await fetch(API + '/admin/api/groups', { method: 'POST', headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: id }) });
+      const d = await r.json();
+      if (!r.ok) return toast(d.error === 'bot_not_in_chat' ? 'Бота немає в цій групі — спершу додайте його' : d.error === 'bad_chat_id' ? 'Невірний chat_id' : 'Помилка');
+      $('groupIdInput').value = ''; toast('Групу додано — налаштуйте, які авто надсилати'); await loadGroups();
+      const g = groups.find((x) => x.chat_id === d.chat_id); if (g) openGroup(g);
+    } catch (e2) { toast('Помилка мережі'); }
+  });
 
   /* ── вхід/вихід ── */
   $('loginForm').addEventListener('submit', (e) => {

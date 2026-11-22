@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2339a0ff'/%3E%3Ctext x='16' y='23' font-family='Arial' font-weight='800' font-size='20' text-anchor='middle' fill='%2307122b'%3EU%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/style.css?v=20261122d" />
-  <link rel="stylesheet" href="css/admin.css?v=20261122d" />
+  <link rel="stylesheet" href="css/style.css?v=20261122e" />
+  <link rel="stylesheet" href="css/admin.css?v=20261122e" />
 </head>
 <body class="admin">
   <header class="top">
@@ -33,6 +33,12 @@
 
     <!-- Панель -->
     <div id="panel" class="hidden">
+      <nav class="tabs" id="tabs">
+        <button type="button" class="tab on" data-tab="cars">Авто</button>
+        <button type="button" class="tab" data-tab="groups">Групи сповіщень <span class="badge hidden" id="pendingBadge"></span></button>
+      </nav>
+
+     <div id="carsWrap">
       <section class="card">
         <div class="toolbar">
           <input id="search" type="search" placeholder="Пошук: назва, VIN, букінг, контейнер…" autocomplete="off" />
@@ -48,6 +54,22 @@
         <h2>Заблоковані <span class="tag">не додаються автоматично</span></h2>
         <div id="blockedList"></div>
       </section>
+     </div>
+
+     <div id="groupsWrap" class="hidden">
+      <section class="card">
+        <h2>Групи сповіщень</h2>
+        <p class="note">Сюди бот надсилає оновлення по авто: новий етап, фото, букінг, контейнер, маршрут і посилання для клієнта.
+          Підключіть групу так: <b>додайте @urbanauto_tracking_bot у групу</b> — вона з'явиться нижче зі статусом «Очікує»,
+          натисніть «Налаштувати», оберіть авто й увімкніть. Або введіть chat_id вручну (бот уже має бути в групі).</p>
+        <form id="groupAddForm" class="lotline">
+          <input id="groupIdInput" type="text" inputmode="numeric" autocomplete="off" placeholder="chat_id групи, напр. -1001234567890" />
+          <button type="submit">Додати</button>
+        </form>
+        <p class="note small">Як дізнатися chat_id: надішліть у групі команду <b>/id@urbanauto_tracking_bot</b> (бот відповість числом) або просто додайте бота — група з’явиться в списку нижче.</p>
+      </section>
+      <section class="cars" id="groups"></section>
+     </div>
     </div>
     <p class="foot err hidden" id="loadErr"></p>
   </main>
@@ -60,12 +82,34 @@
     </div>
   </div>
 
+  <!-- Налаштування групи -->
+  <div class="modal hidden" id="groupModal" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <button type="button" class="modal-x" id="groupClose" aria-label="Закрити">×</button>
+      <h3 id="groupTitle"></h3>
+      <p class="note" id="groupMeta"></p>
+      <label class="remember"><input type="checkbox" id="gActive" /> Група активна (бот надсилає сповіщення)</label>
+      <div class="scope">
+        <label class="remember"><input type="radio" name="gScope" value="all" /> Усі авто (в тому числі нові)</label>
+        <label class="remember"><input type="radio" name="gScope" value="cars" /> Лише вибрані авто</label>
+      </div>
+      <div id="gCarsBox">
+        <input id="gCarsSearch" type="search" placeholder="Пошук авто…" autocomplete="off" />
+        <div class="carlist" id="gCars"></div>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="groupCancel">Скасувати</button>
+        <button type="button" class="btn" id="groupSave">Зберегти</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Підтвердження видалення -->
   <div class="modal hidden" id="confirm" role="dialog" aria-modal="true">
     <div class="modal-box small">
       <h3 id="confirmTitle"></h3>
       <p id="confirmText" class="note"></p>
-      <label class="remember hidden" id="blockRow"><input type="checkbox" id="blockChk" /> Не додавати це авто знову (ігнорувати повідомлення з цим VIN)</label>
+      <label class="remember hidden" id="blockRow"><input type="checkbox" id="blockChk" /> <span id="blockLabel">Не додавати це авто знову (ігнорувати повідомлення з цим VIN)</span></label>
       <div class="actions">
         <button type="button" class="btn ghost" id="confirmNo">Скасувати</button>
         <button type="button" class="btn danger" id="confirmYes">Видалити</button>
@@ -75,7 +119,7 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="js/config.js?v=20261122d"></script>
-  <script src="js/admin.js?v=20261122d"></script>
+  <script src="js/config.js?v=20261122e"></script>
+  <script src="js/admin.js?v=20261122e"></script>
 </body>
 </html>

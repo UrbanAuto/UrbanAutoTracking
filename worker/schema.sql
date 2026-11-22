@@ -39,3 +39,19 @@ CREATE TABLE IF NOT EXISTS blocked (
   note TEXT,
   created_at INTEGER NOT NULL
 );
+
+-- групи/канали, куди бот пушить сповіщення про авто (керуються в адмін-панелі)
+CREATE TABLE IF NOT EXISTS push_groups (
+  chat_id TEXT PRIMARY KEY,
+  title TEXT,
+  type TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending (очікує підтвердження) | active | disabled | error
+  scope TEXT NOT NULL DEFAULT 'cars',       -- all (усі авто) | cars (лише вибрані в push_group_cars)
+  last_error TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_group_cars (
+  chat_id TEXT NOT NULL,
+  code TEXT NOT NULL,
+  PRIMARY KEY (chat_id, code)
+);

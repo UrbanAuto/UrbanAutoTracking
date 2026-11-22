@@ -16,6 +16,7 @@ const STAGES = [
   { id: 6, title: 'Розформування контейнера',  re: /розформ|розвантаж|devan|unload/i },
 ];
 const CONTAINER_RE = /номер\s+контейнер[а-яіїєґ]*\s*(?:№|#|:|-)?\s*([^\n]{3,40})/i;   // «Номер контейнера: ABCDEFG2299 (MAERSK)»
+const ORDER_RE = /cargoplus\.pro\/cars\/order_(\d+)/i;   // «…/cars/order_20171» — номер замовлення CargoPlus (запасний ключ авто)
 const BOOKING_RE = /(?:номер\s+)?(?:букінг[а-яіїєґ]*|booking)\s*(?:№|#|:|-)?\s*([^\n]{3,40})/i;
 
 const VIN_RE = /(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])/i;
@@ -107,13 +108,14 @@ async function webhook(req, env) {
     return new Response('forbidden', { status: 403 });
   const update = await req.json();
   const msg = update.message || update.channel_post || update.business_message; // business_message — режим «Секретар» (чат з ботом CargoPlus)
+  if (msg && update.backfill) msg.__quiet = true; // імпорт історії (tools/backfill.mjs): без сповіщень у чат
   if (msg) {
     try { await handleMessage(msg, env); } catch (e) { console.error('handleMessage', e); }
   }
   return new Response('ok'); // завжди 200, щоб Telegram не повторював «биті» повідомлення
 }
 
-const reply = (env, msg, text) => msg.business_connection_id ? null : // у чужому бізнес-чаті від імені бота нічого не пишемо
+const reply = (env, msg, text) => (msg.business_connection_id || msg.__quiet) ? null : // у чужому бізнес-чаті від імені бота нічого не пишемо
   tg(env, 'sendMessage', { chat_id: msg.chat.id, text, message_thread_id: msg.message_thread_id, // На повідомлення іншого бота — звичайне повідомлення, а не reply: так воно не адресоване йому й не запускає цикл бот↔бот
     ...(msg.from?.is_bot ? {} : { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } }) }).catch(console.error);
 
@@ -130,7 +132,8 @@ function parseInfo(text) {
     .replace(TITLE_RE, ' ').replace(/\d+\s*фото/gi, ' ').replace(/VIN:?/gi, ' ').replace(new RegExp(BOOKING_RE.source, 'gi'), ' ').replace(new RegExp(CONTAINER_RE.source, 'gi'), ' ');
   const booking = (text.match(BOOKING_RE) || [])[1]?.replace(/[\s.,;]+$/, '').trim() || null;
   const container = (text.match(CONTAINER_RE) || [])[1]?.replace(/[\s.,;]+$/, '').trim() || null;
-  return { vin, lot, title, eventTs, signal, booking, container };
+  const orderId = (text.match(ORDER_RE) || [])[1] || null;
+  return { vin, lot, title, eventTs, signal, booking, container, orderId };
 }
 
 async function handleMessage(msg, env) {
@@ -154,16 +157,23 @@ async function handleMessage(msg, env) {
   }
 
   // 1) до якого авто належить повідомлення
-  const { vin, lot, title, eventTs, signal, booking, container } = parseInfo(text);
+  const { vin, lot, title, eventTs, signal, booking, container, orderId } = parseInfo(text);
   const photos = msg.photo?.length ? msg.photo : null;
   const photoId = photos ? photos[photos.length - 1].file_id : null;
   const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : null;
   let code = null, groupEvent = null, created = false;
 
+  // Спершу шукаємо вже існуючу картку (VIN → номер замовлення CargoPlus → лот): нову створюємо лише якщо такої немає
   if (vin) code = (await env.DB.prepare('SELECT code FROM cars WHERE vin = ?1').bind(vin).first())?.code;
+  if (!code && orderId) code = (await env.DB.prepare('SELECT code FROM cars WHERE order_id = ?1').bind(orderId).first())?.code;
   if (!code && lot) code = (await env.DB.prepare('SELECT code FROM cars WHERE lot = ?1').bind(lot).first())?.code;
   if (!code && (vin || lot)) {
-    ({ code, created } = await createCar(env, { vin, lot, title: title || (vin ? `VIN ${vin}` : `Лот ${lot}`) }));
+    ({ code, created } = await createCar(env, { vin, lot, orderId, title: title || (vin ? `VIN ${vin}` : `Лот ${lot}`) }));
+  }
+  if (code && !created) {
+    // дозаповнюємо відсутні дані існуючої картки (VIN/лот/номер замовлення), нічого не перезаписуючи
+    await env.DB.prepare('UPDATE cars SET vin = COALESCE(vin, ?1), lot = COALESCE(lot, ?2), order_id = COALESCE(order_id, ?3) WHERE code = ?4')
+      .bind(vin || null, lot || null, orderId, code).run().catch(() => {}); // UNIQUE(vin) може збігтися з іншою карткою — тоді просто пропускаємо
   }
   if (!code && msg.media_group_id) {
     groupEvent = await env.DB.prepare('SELECT code, stage FROM events WHERE group_id = ?1 AND chat_id = ?2 LIMIT 1').bind(msg.media_group_id, chatId).first();
@@ -222,6 +232,9 @@ async function notify(env, msg, { code, created, stage, ts, booking, container, 
   if (car.vin) lines.push(`VIN: ${car.vin}`);
   if (stage) {
     lines.push(`📍 Етап ${stage}/${STAGES.length}: ${STAGES[stage - 1].title}`);
+    // Пізнє фото ранішого етапу лише підвантажується в свій етап — поточний етап авто не змінюється
+    const cur = (await env.DB.prepare('SELECT MAX(stage) AS m FROM events WHERE code = ?1 AND ts <= ?2').bind(code, Date.now()).first())?.m || 0;
+    if (cur > stage) lines.push(`↩️ Додано до раніших етапів, поточний етап не змінено: ${cur}/${STAGES.length} (${STAGES[cur - 1].title})`);
     lines.push(`📅 ${ts > Date.now() ? 'заплановано на ' : ''}${fmtDate(ts)}`);
     if (photoId) {
       const n = (await env.DB.prepare('SELECT COUNT(*) AS n FROM events WHERE code = ?1 AND stage = ?2 AND photo_id IS NOT NULL').bind(code, stage).first())?.n;
@@ -260,10 +273,10 @@ function detectStage(text) {
   return best;
 }
 
-async function createCar(env, { vin, lot, title }) {
+async function createCar(env, { vin, lot, orderId, title }) {
   const code = newCode();
-  const r = await env.DB.prepare('INSERT OR IGNORE INTO cars (code, vin, lot, title, created_at) VALUES (?1,?2,?3,?4,?5)')
-    .bind(code, vin || null, lot || null, title, Date.now()).run();
+  const r = await env.DB.prepare('INSERT OR IGNORE INTO cars (code, vin, lot, order_id, title, created_at) VALUES (?1,?2,?3,?4,?5,?6)')
+    .bind(code, vin || null, lot || null, orderId || null, title, Date.now()).run();
   if (!r.meta?.changes) {
     // паралельне повідомлення з тим самим VIN уже створило картку — беремо її
     const row = vin ? await env.DB.prepare('SELECT code FROM cars WHERE vin = ?1').bind(vin).first() : null;

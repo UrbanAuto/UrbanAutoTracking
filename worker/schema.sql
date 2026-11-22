@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS cars (
   lot TEXT,
   booking TEXT,                   -- номер букінга
   container TEXT,                 -- номер контейнера
+  order_id TEXT,                  -- номер замовлення CargoPlus (…/cars/order_20171)
   title TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );

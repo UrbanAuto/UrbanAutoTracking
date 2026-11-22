@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS kv (
   v TEXT
 );
 INSERT OR IGNORE INTO kv (k, v) VALUES ('contract_counter', '655');   -- наступний договір матиме номер 656
+INSERT OR IGNORE INTO kv (k, v) VALUES ('deposit_counter', '40');    -- наступна квитанція на депозит матиме номер 41/9
 
 CREATE TABLE IF NOT EXISTS contracts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

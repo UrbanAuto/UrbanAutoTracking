@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2339a0ff'/%3E%3Ctext x='16' y='23' font-family='Arial' font-weight='800' font-size='20' text-anchor='middle' fill='%2307122b'%3EU%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/style.css?v=20261122f" />
-  <link rel="stylesheet" href="css/admin.css?v=20261122f" />
+  <link rel="stylesheet" href="css/style.css?v=20261123b" />
+  <link rel="stylesheet" href="css/admin.css?v=20261123b" />
 </head>
 <body class="admin">
   <header class="top">
@@ -37,6 +37,7 @@
         <button type="button" class="tab on" data-tab="cars">Авто</button>
         <button type="button" class="tab" data-tab="groups">Групи сповіщень <span class="badge hidden" id="pendingBadge"></span></button>
         <button type="button" class="tab" data-tab="contracts">Договори</button>
+        <button type="button" class="tab" data-tab="ai">Чат ШІ</button>
       </nav>
 
      <div id="carsWrap">
@@ -70,6 +71,31 @@
         <p class="note small">Як дізнатися chat_id: надішліть у групі команду <b>/id@urbanauto_tracking_bot</b> (бот відповість числом) або просто додайте бота — група з’явиться в списку нижче.</p>
       </section>
       <section class="cars" id="groups"></section>
+     </div>
+     <div id="aiWrap" class="hidden">
+      <section class="card">
+        <h2>Живе спілкування бота</h2>
+        <p class="note">Бот відповідає жартівливо, коли відповідають на його повідомлення, згадують його в групі (@urbanauto_tracking_bot) або пишуть йому особисто. Статуси авто, ціни й умови договорів він не вигадує.
+          Захист від флуду: пауза 15 с на людину, 5 с на групу, ліміт на чат за годину та на добу. Правила безпеки зашиті в код і не редагуються.</p>
+        <label class="remember"><input type="checkbox" id="aiEnabled" /> Спілкування увімкнено</label>
+        <h2 style="margin-top:22px">Ранкове привітання</h2>
+        <p class="note">Раз на день бот надсилає жарт у всі активні групи сповіщень і в робочу групу. Текст щоразу новий (ШІ), без повторів.</p>
+        <label class="remember"><input type="checkbox" id="mEnabled" /> Надсилати ранкове привітання</label>
+        <label class="remember"><input type="checkbox" id="mWeekdays" /> Лише в будні (пн–пт)</label>
+        <div class="lotline" style="margin-top:12px"><input id="mTime" type="time" step="60" style="max-width:140px" /><button type="button" id="mSave">Зберегти час</button><button type="button" class="btn ghost" id="mPreview">Показати приклад</button></div>
+        <p class="note small">Час — за Києвом. Приклад показується тут і нікому не надсилається.</p>
+        <p class="note" id="mOut"></p>
+        <h2 style="margin-top:22px">Спілкування в чаті</h2>
+        <p class="note small" style="margin-top:14px">Стиль (тон і приклади відповідей):</p>
+        <textarea id="aiStyle" rows="10" spellcheck="false"></textarea>
+        <div class="actions" style="justify-content:flex-start">
+          <button type="button" class="btn" id="aiSave">Зберегти</button>
+          <button type="button" class="btn ghost" id="aiReset">Стиль за замовчуванням</button>
+        </div>
+        <p class="note small" style="margin-top:14px">Перевірити відповідь:</p>
+        <form id="aiTestForm" class="lotline"><input id="aiTestText" type="text" autocomplete="off" placeholder="Напишіть повідомлення, наприклад: де моя машина?" /><button type="submit">Спитати</button></form>
+        <p class="note" id="aiTestOut"></p>
+      </section>
      </div>
      <div id="contractsWrap" class="hidden">
       <section class="card">
@@ -127,7 +153,7 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="js/config.js?v=20261122f"></script>
-  <script src="js/admin.js?v=20261122f"></script>
+  <script src="js/config.js?v=20261123b"></script>
+  <script src="js/admin.js?v=20261123b"></script>
 </body>
 </html>

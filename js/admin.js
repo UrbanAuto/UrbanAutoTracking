@@ -154,9 +154,10 @@
 
   function setTab(name) {
     for (const t of document.querySelectorAll('#tabs .tab')) t.classList.toggle('on', t.dataset.tab === name);
-    $('carsWrap').classList.toggle('hidden', name !== 'cars'); $('groupsWrap').classList.toggle('hidden', name !== 'groups'); $('contractsWrap').classList.toggle('hidden', name !== 'contracts');
+    $('carsWrap').classList.toggle('hidden', name !== 'cars'); $('groupsWrap').classList.toggle('hidden', name !== 'groups'); $('contractsWrap').classList.toggle('hidden', name !== 'contracts'); $('aiWrap').classList.toggle('hidden', name !== 'ai');
     if (name === 'groups') loadGroups();
     if (name === 'contracts') loadContracts();
+    if (name === 'ai') loadAi();
   }
   $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab'); if (b) setTab(b.dataset.tab); });
 
@@ -259,6 +260,32 @@
       act.appendChild(del); card.appendChild(act); box.appendChild(card);
     }
   }
+  /* ── чат ШІ ── */
+  let aiDefault = '';
+  async function loadAi() {
+    let c; try { c = await api('/ai'); } catch (e) { return; }
+    aiDefault = c.defaultStyle; $('aiEnabled').checked = c.enabled; $('aiStyle').value = c.style;
+    $('mEnabled').checked = c.morning.enabled; $('mWeekdays').checked = c.morning.weekdaysOnly; $('mTime').value = c.morning.time;
+    $('aiTestOut').textContent = c.available ? '' : '⚠️ Workers AI не підключено до воркера.';
+  }
+  $('aiEnabled').addEventListener('change', async () => { try { await api('/ai', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: $('aiEnabled').checked }) }); toast($('aiEnabled').checked ? 'Спілкування увімкнено' : 'Спілкування вимкнено'); } catch (e) { toast('Не вдалося зберегти'); } });
+  $('aiSave').addEventListener('click', async () => { try { await api('/ai', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ style: $('aiStyle').value }) }); toast('Стиль збережено'); } catch (e) { toast('Не вдалося зберегти'); } });
+  const putMorning = async (m, msg) => { try { await api('/ai', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ morning: m }) }); toast(msg); } catch (e) { toast('Не вдалося зберегти'); } };
+  $('mEnabled').addEventListener('change', () => putMorning({ enabled: $('mEnabled').checked }, $('mEnabled').checked ? 'Привітання увімкнено' : 'Привітання вимкнено'));
+  $('mWeekdays').addEventListener('change', () => putMorning({ weekdaysOnly: $('mWeekdays').checked }, 'Збережено'));
+  $('mSave').addEventListener('click', () => /^\d\d:\d\d$/.test($('mTime').value) ? putMorning({ time: $('mTime').value }, 'Час збережено') : toast('Вкажіть час'));
+  $('mPreview').addEventListener('click', async () => {
+    $('mOut').textContent = '…думаю';
+    try { const r = await api('/ai/morning-preview', { method: 'POST' }); $('mOut').textContent = r.text ? '🤖 ' + r.text : '⚠️ ' + (r.error || 'порожня відповідь'); } catch (e) { $('mOut').textContent = '⚠️ Не вдалося отримати приклад'; }
+  });
+  $('aiReset').addEventListener('click', () => { $('aiStyle').value = aiDefault; toast('Натисніть «Зберегти»'); });
+  $('aiTestForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); const t = $('aiTestText').value.trim(); if (!t) return;
+    $('aiTestOut').textContent = '…думаю'; 
+    try { const r = await api('/ai/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t }) }); $('aiTestOut').textContent = r.reply ? '🤖 ' + r.reply : '⚠️ ' + (r.error || 'порожня відповідь'); }
+    catch (er) { $('aiTestOut').textContent = '⚠️ Не вдалося отримати відповідь'; }
+  });
+
   /* ── вхід/вихід ── */
   $('loginForm').addEventListener('submit', (e) => {
     e.preventDefault(); const v = $('tokenInput').value.trim(); if (!v) return;

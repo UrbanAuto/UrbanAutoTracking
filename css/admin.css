@@ -92,3 +92,8 @@ body.admin input[type=password], body.admin input[type=search], body.admin input
 .carlist small { color: var(--muted); font-weight: 600; word-break: break-all; }
 .carlist.off { opacity: .45; pointer-events: none; }
 .err-line { margin: 8px 0 0; color: #ff9aa2; font-size: 13px; font-weight: 600; word-break: break-word; }
+
+/* чат ШІ */
+#aiStyle { width: 100%; padding: 12px 14px; border: 1px solid var(--field-line); border-radius: 12px; background: var(--field); color: var(--ink);
+  font: inherit; font-size: 14px; line-height: 1.5; resize: vertical; text-transform: none; letter-spacing: 0; }
+#aiTestOut { white-space: pre-wrap; word-break: break-word; }

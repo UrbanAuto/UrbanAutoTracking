@@ -6,6 +6,7 @@ const MONTHS = ['січня', 'лютого', 'березня', 'квітня', 
 const MALE_A = new Set(['микита', 'лука', 'сава', 'кузьма', 'хома', 'фома', 'ілля', 'гаврила', 'данила', 'мирона']);
 const BLANK = '_______________';
 const FIELD_NAMES = { name: 'ПІБ', taxId: 'РНОКПП', address: 'Адреса', phone: 'Телефон' };
+const ALL_NAMES = { ...FIELD_NAMES, deposit: 'Сума депозиту' };        // депозит не входить у текст договору, а йде в квитанцію
 const DRAFT_TTL = 24 * 3600 * 1000;
 const retentionMs = (env) => (+env.CONTRACT_RETENTION_HOURS || 24) * 3600 * 1000;
 
@@ -15,6 +16,7 @@ const LABELS = [
   ['taxId', /^(?:рнокпп|ірнокпп|іпн|інн|ідентифікаційний\s+код|податковий\s+номер|код)\s*[:\-–—=]\s*(.*)$/i],
   ['address', /^(?:адреса(?:\s+реєстрації)?|місце\s+реєстрації|address)\s*[:\-–—=]\s*(.*)$/i],
   ['phone', /^(?:тел(?:ефон)?\.?|моб(?:ільний)?\.?|phone)\s*[:\-–—=]\s*(.*)$/i],
+  ['deposit', /^(?:страховий\s+депозит|депозит|застава|сума(?:\s+депозиту)?|deposit)\s*[:\-–—=]\s*(.*)$/i],
 ];
 const NAME_WORD = "[А-ЯІЇЄҐA-Z][а-яіїєґa-z'’ʼ-]+";
 
@@ -54,6 +56,13 @@ const VALIDATORS = {
     const p = normalizePhone(v);
     return p ? { value: p } : { error: 'формат +380XXXXXXXXX або 0XXXXXXXXX' };
   },
+  deposit(v) {
+    const t = v.replace(/[\s\u00a0]/g, '').replace(/(грн|гривень|гривні|uah|₴)\.?$/i, '').replace(',', '.');
+    if (!/^\d{1,7}(\.\d{1,2})?$/.test(t)) return { error: 'вкажіть суму цифрами, наприклад 4500' };
+    const n = Math.round(parseFloat(t) * 100);
+    if (n <= 0) return { error: 'сума має бути більшою за 0' };
+    return { value: n % 100 ? (n / 100).toFixed(2) : String(n / 100) };   // «4500» або «4500.50»
+  },
 };
 
 /** Розбирає повідомлення → { fields, errors, recognized }. Рядки «Поле: значення» мають пріоритет, решту намагаємось розпізнати за виглядом. */
@@ -70,6 +79,7 @@ export function parseClientData(text) {
     const phoneLike = /^[+\d()\s-]{9,20}$/.test(line) && normalizePhone(line) && (line.startsWith('+') || /[\s()-]/.test(line) || digits.startsWith('0') || digits.length === 12);
     if (phoneLike) raw.phone = line;                                  // РНОКПП ніколи не починається з 0, тому 0XXXXXXXXX — це телефон
     else if (/^\d{10}$/.test(line)) raw.taxId = line;
+    else if (/^\d[\d\s\u00a0]{0,8}(?:[.,]\d{1,2})?\s*(?:грн|₴)?\.?$/i.test(line) && digits.length <= 7) raw.deposit = line;   // просто «4500» — відповідь на питання про суму
     else if (new RegExp(`^${NAME_WORD}(?:\\s+${NAME_WORD}){1,3}$`).test(line)) raw.name = line;
     else if (/(?:^|\s)(?:м\.|місто|вул\.|вулиця|просп\.|пров\.|буд\.|обл\.|кв\.)/i.test(line)) raw.address = line;
   }
@@ -98,7 +108,39 @@ export function shortName(name) {
 
 export function kyivDate(now = new Date()) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Kyiv', day: '2-digit', month: '2-digit', year: 'numeric' }).formatToParts(now).map((x) => [x.type, x.value]));
-  return { day: parts.day, month: MONTHS[+parts.month - 1], year: parts.year };
+  return { day: parts.day, month: MONTHS[+parts.month - 1], mm: parts.month, year: parts.year };
+}
+
+/* ───────────── сума прописом (гривні — жіночого роду: одна, дві) ───────────── */
+const U_M = ['', 'один', 'два', 'три', 'чотири', 'п’ять', 'шість', 'сім', 'вісім', 'дев’ять'];
+const U_F = ['', 'одна', 'дві', ...U_M.slice(3)];
+const TEENS = ['десять', 'одинадцять', 'дванадцять', 'тринадцять', 'чотирнадцять', 'п’ятнадцять', 'шістнадцять', 'сімнадцять', 'вісімнадцять', 'дев’ятнадцять'];
+const TENS = ['', '', 'двадцять', 'тридцять', 'сорок', 'п’ятдесят', 'шістдесят', 'сімдесят', 'вісімдесят', 'дев’яносто'];
+const HUNDREDS = ['', 'сто', 'двісті', 'триста', 'чотириста', 'п’ятсот', 'шістсот', 'сімсот', 'вісімсот', 'дев’ятсот'];
+const SCALES = [null, ['тисяча', 'тисячі', 'тисяч', true], ['мільйон', 'мільйони', 'мільйонів', false], ['мільярд', 'мільярди', 'мільярдів', false]];
+const pluralIdx = (n) => (n % 100 >= 11 && n % 100 <= 19 ? 2 : n % 10 === 1 ? 0 : n % 10 >= 2 && n % 10 <= 4 ? 1 : 2);
+
+function triad(n, fem) {
+  const out = [HUNDREDS[Math.floor(n / 100)]], r = n % 100;
+  if (r >= 10 && r <= 19) out.push(TEENS[r - 10]);
+  else { out.push(TENS[Math.floor(r / 10)]); out.push((fem ? U_F : U_M)[r % 10]); }
+  return out.filter(Boolean);
+}
+
+/** 4500 → «Чотири тисячі п’ятсот» (ціле число гривень, 1 … 999 999 999 999). */
+export function amountWords(n) {
+  if (!Number.isInteger(n) || n < 0 || n >= 1e12) throw new Error('Сума поза межами');
+  if (n === 0) return 'Нуль';
+  const words = [];
+  for (let i = 3; i >= 0; i--) {
+    const part = Math.floor(n / 1000 ** i) % 1000;
+    if (!part) continue;
+    const sc = SCALES[i];
+    words.push(...triad(part, i === 0 ? true : sc[3]));
+    if (sc) words.push(sc[pluralIdx(part)]);
+  }
+  const s = words.join(' ');
+  return s[0].toUpperCase() + s.slice(1);
 }
 
 export function buildValues(fields, number, env, now = new Date()) {
@@ -110,6 +152,31 @@ export function buildValues(fields, number, env, now = new Date()) {
     CLIENT_NAME: fields.name || BLANK, CLIENT_SHORT: fields.name ? shortName(fields.name) : BLANK,
     CLIENT_TAX_ID: fields.taxId || BLANK, CLIENT_ADDRESS: fields.address || BLANK, CLIENT_PHONE: fields.phone || BLANK,
   };
+}
+
+/* ───────────── квитанція на страховий депозит ───────────── */
+/** deposit — рядок «4500» або «4500.50»; receiptNo — «41/9». */
+export function buildReceiptValues(fields, number, receiptNo, now = new Date()) {
+  const d = kyivDate(now), [hry, kop = '00'] = String(fields.deposit).split('.');
+  const serial = Math.round((Date.UTC(+d.year, +d.mm - 1, +d.day) - Date.UTC(1899, 11, 30)) / 86400000);   // дата Excel
+  return {
+    CLIENT_NAME: fields.name || BLANK, CONTRACT_NO4: String(number).padStart(4, '0'), CONTRACT_DATE: `${d.day}.${d.mm}.${d.year}`,
+    RECEIPT_NO: receiptNo, RECEIPT_DATE_LONG: `${+d.day} ${d.month[0].toUpperCase()}${d.month.slice(1)} ${d.year} р.`,
+    AMOUNT: hry, AMOUNT_NUM: String(fields.deposit), KOP: kop.padEnd(2, '0'), AMOUNT_WORDS: amountWords(+hry), PAY_SERIAL: String(serial),
+  };
+}
+
+export function fillXlsx(templateBytes, values) {
+  const files = unzipSync(templateBytes);
+  let left = [];
+  for (const name of ['xl/sharedStrings.xml', 'xl/worksheets/sheet1.xml']) {
+    let xml = strFromU8(files[name]);
+    for (const [k, v] of Object.entries(values)) xml = xml.split(`{{${k}}}`).join(/^[\d.]+$/.test(v) ? v : xmlEscape(v));
+    left = left.concat(xml.match(/\{\{[A-Z_0-9]+\}\}/g) || []);
+    files[name] = strToU8(xml);
+  }
+  if (left.length) throw new Error('Не підставлено мітки в квитанції: ' + [...new Set(left)].join(', '));
+  return zipSync(files, { level: 6 });
 }
 
 /* ───────────── Word-шаблон ───────────── */
@@ -142,14 +209,14 @@ export async function decryptJson(env, s) {
   return JSON.parse(strFromU8(new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, await aesKey(env), unb64(ct)))));
 }
 
-/* ───────────── CloudConvert: docx → pdf ───────────── */
-export async function convertToPdf(env, docxBytes) {
+/* ───────────── CloudConvert: docx/xlsx → pdf ───────────── */
+export async function convertToPdf(env, srcBytes, fmt = 'docx') {
   if (!env.CLOUDCONVERT_API_KEY) throw new Error('Не налаштовано CLOUDCONVERT_API_KEY');
   const r = await fetch('https://sync.api.cloudconvert.com/v2/jobs', {
     method: 'POST', headers: { authorization: 'Bearer ' + env.CLOUDCONVERT_API_KEY, 'content-type': 'application/json' },
     body: JSON.stringify({ tasks: {
-      'import-1': { operation: 'import/base64', file: b64(docxBytes), filename: 'contract.docx' },
-      'convert-1': { operation: 'convert', input: 'import-1', input_format: 'docx', output_format: 'pdf' },
+      'import-1': { operation: 'import/base64', file: b64(srcBytes), filename: 'file.' + fmt },
+      'convert-1': { operation: 'convert', input: 'import-1', input_format: fmt, output_format: 'pdf' },
       'export-1': { operation: 'export/url', input: 'convert-1' },
     } }),
   });
@@ -210,17 +277,53 @@ async function getDraft(env, chatId) {
 }
 
 function statusLines(c) {
-  const have = Object.keys(FIELD_NAMES).filter((k) => c.fields[k]), miss = Object.keys(FIELD_NAMES).filter((k) => !c.fields[k]);
-  return { have, miss, text: miss.length ? '📝 Не вистачає: ' + miss.map((k) => FIELD_NAMES[k]).join(', ') : '✅ Усі дані внесено — договір готовий до підпису' };
+  const keys = Object.keys(ALL_NAMES), have = keys.filter((k) => c.fields[k]), miss = keys.filter((k) => !c.fields[k]);
+  return { have, miss, text: miss.length ? '📝 Не вистачає: ' + miss.map((k) => ALL_NAMES[k]).join(', ') : '✅ Усі дані внесено — договір і квитанція готові' };
+}
+
+const money = (d) => { const [h, k = '00'] = String(d).split('.'); return `${h} грн ${k.padEnd(2, '0')} коп.`; };
+
+/** Номер квитанції («41/9») видається один раз на договір і не змінюється між версіями. Лічильник — kv.deposit_counter. */
+async function receiptNumber(env, number) {
+  const key = `receipt:${number}`;
+  const have = await env.DB.prepare('SELECT v FROM kv WHERE k = ?1').bind(key).first();
+  if (have) return have.v;
+  const n = (await env.DB.prepare("UPDATE kv SET v = CAST(v AS INTEGER) + 1 WHERE k = 'deposit_counter' RETURNING v").first())?.v;
+  if (!n) throw new Error('Не налаштовано лічильник квитанцій (kv.deposit_counter)');
+  const no = `${n}/${env.DEPOSIT_RECEIPT_SUFFIX || '9'}`;
+  await env.DB.prepare('INSERT OR IGNORE INTO kv (k, v) VALUES (?1, ?2)').bind(key, no).run();
+  return (await env.DB.prepare('SELECT v FROM kv WHERE k = ?1').bind(key).first()).v;
+}
+
+async function getDepositTemplate(env) {
+  const row = await env.DB.prepare("SELECT v FROM kv WHERE k = 'deposit_template'").first();
+  if (!row) throw new Error('Шаблон квитанції ще не завантажено в базу (tools/upload_template.mjs … deposit_template)');
+  return unb64(row.v);
+}
+
+/** Квитанція на страховий депозит: PDF (або Excel, якщо конвертація не вдалась). */
+async function sendReceipt(env, chatId, c, extra = '') {
+  const no = await receiptNumber(env, c.number);
+  const xlsx = fillXlsx(await getDepositTemplate(env), buildReceiptValues(c.fields, c.number, no));
+  const caption = `${extra ? extra + '\n' : ''}💳 Квитанція № ${no} на страховий депозит\nДоговір №${c.number} · ${money(c.fields.deposit)} (${amountWords(+String(c.fields.deposit).split('.')[0])})`;
+  try {
+    await sendDocument(env, chatId, await convertToPdf(env, xlsx, 'xlsx'), `Квитанція_депозит_${c.number}.pdf`, caption, 'application/pdf');
+  } catch (e) {
+    console.error('receipt pdf', String(e).slice(0, 200));
+    await sendDocument(env, chatId, xlsx, `Квитанція_депозит_${c.number}.xlsx`, `${caption}\n⚠️ PDF зараз не вдалося створити (${String(e.message || e).slice(0, 120)}). Надсилаю Excel. Спробуйте /pdf пізніше.`,
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  }
 }
 
 /** Створює (або оновлює) PDF і надсилає його. note — текст зверху підпису. */
-async function renderAndSend(env, chatId, c, note) {
+async function renderAndSend(env, chatId, c, note, only = null) {
   await tgJson(env, 'sendChatAction', { chat_id: chatId, action: 'upload_document' });
+  if (only === 'receipt') return void await sendReceipt(env, chatId, c, note);   // змінилась лише сума — договір не чіпаємо
   const version = c.version + 1;
   const docx = fillDocx(await getTemplate(env), buildValues(c.fields, c.number, env));
   const st = statusLines(c);
-  const caption = `${note ? note + '\n' : ''}📎 Договір №${c.number} · версія ${version}\n${st.text}\n🔒 Дані клієнта видаляться з бази за ${+env.CONTRACT_RETENTION_HOURS || 24} год. або після /завершити; PDF лишається в цьому чаті.`;
+  const ask = c.fields.deposit ? '' : '\n💳 Яку суму страхового депозиту вписати в квитанцію? Напишіть, наприклад: Депозит: 4500';
+  const caption = `${note ? note + '\n' : ''}📎 Договір №${c.number} · версія ${version}\n${st.text}${ask}\n🔒 Дані клієнта видаляться з бази за ${+env.CONTRACT_RETENTION_HOURS || 24} год. або після /завершити; PDF лишається в цьому чаті.`;
   let fileId, sentAs = 'pdf';
   try {
     const pdf = await convertToPdf(env, docx);
@@ -233,6 +336,7 @@ async function renderAndSend(env, chatId, c, note) {
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   }
   await env.DB.prepare('UPDATE contracts SET version = ?1, last_file_id = ?2, updated_at = ?3 WHERE number = ?4').bind(version, sentAs === 'pdf' ? fileId : null, Date.now(), c.number).run();
+  if (c.fields.deposit) await sendReceipt(env, chatId, c);          // квитанція йде разом з кожною версією договору
 }
 
 async function newContract(env, msg) {
@@ -250,7 +354,8 @@ const HELP = (n) => `📄 Створено договір №${n} (чернет�
 • РНОКПП: 1234567890
 • Адреса: м. Київ, вул. Хрещатик, 1, кв. 2
 • Телефон: +380501234567
-Після кожного повідомлення я оновлю договір і надішлю PDF (нова версія).
+• Депозит: 4500 (страховий депозит — потрапляє в квитанцію, суму пропишу словами)
+Після кожного повідомлення я оновлю договір і надішлю PDF (нова версія) разом із квитанцією на депозит.
 /pdf — створити ще раз · /завершити — закінчити · /договори — список`;
 
 /** Повертає true, якщо повідомлення оброблено як договірне. Важка частина виконується у ctx.waitUntil. */
@@ -321,11 +426,13 @@ export async function handleContract(msg, env, ctx) {
     if (msg.message_id <= (c.last_msg || 0)) return;                       // повторна доставка того самого повідомлення
     const changed = Object.entries(parsed.fields).filter(([k, v]) => c.fields[k] !== v);
     const lines = [];
-    if (changed.length) lines.push('✅ Внесено: ' + changed.map(([k]) => FIELD_NAMES[k]).join(', '));
-    for (const e of parsed.errors) lines.push(`⚠️ ${FIELD_NAMES[e.field]}: ${e.message}`);
+    if (changed.length) lines.push('✅ Внесено: ' + changed.map(([k]) => ALL_NAMES[k]).join(', '));
+    for (const e of parsed.errors) lines.push(`⚠️ ${ALL_NAMES[e.field]}: ${e.message}`);
     c.fields = { ...c.fields, ...parsed.fields };
     await env.DB.prepare('UPDATE contracts SET data = ?1, last_msg = ?2, updated_at = ?3 WHERE number = ?4').bind(await encryptJson(env, c.fields), msg.message_id, Date.now(), c.number).run();
-    if (changed.length) await renderAndSend(env, chatId, c, lines.join('\n'));
+    // змінилась лише сума депозиту (і договір уже є) — надсилаємо тільки нову квитанцію, не витрачаючи ліміт конвертації на договір
+    const onlyDeposit = changed.length && changed.every(([k]) => k === 'deposit') && c.version > 0;
+    if (changed.length) await renderAndSend(env, chatId, c, lines.join('\n'), onlyDeposit ? 'receipt' : null);
     else await say(env, chatId, (lines.join('\n') || 'Нічого нового не внесено.') + '\n' + statusLines(c).text);
   })());
 }

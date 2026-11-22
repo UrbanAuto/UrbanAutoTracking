@@ -4,6 +4,7 @@
 //   GET  /photo/:code/:id    → фото (Telegram-токен ніколи не потрапляє до клієнта)
 
 import { handleContract, adminContracts, purgeContracts } from './contract.js';
+import { maybeChat, purgeChatState, morningGreeting, purgeMorningMarks, adminAiGet, adminAiSet, adminAiTest, adminMorningPreview } from './chat.js';
 
 // Етапи. Бот шукає в тексті повідомлення ключові слова (укр/рос/англ).
 // Явно вказати етап можна й так: #етап3 або #3. Слова підлаштуємо під ваші реальні повідомлення.
@@ -30,7 +31,9 @@ const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export default {
   // щохвилини (див. [triggers] у wrangler.toml)
-  async scheduled(event, env, ctx) { ctx.waitUntil(flushBuffer(env)); ctx.waitUntil(purgeContracts(env).catch((e) => console.error('purge', String(e).slice(0, 120)))); },
+  async scheduled(event, env, ctx) { ctx.waitUntil(flushBuffer(env)); ctx.waitUntil(purgeContracts(env).catch((e) => console.error('purge', String(e).slice(0, 120))));
+    ctx.waitUntil(morningGreeting(env, new Date(event.scheduledTime)).catch((e) => console.error('morning', String(e).slice(0, 120))));
+    if (new Date(event.scheduledTime).getUTCMinutes() === 0) ctx.waitUntil(Promise.all([purgeChatState(env), purgeMorningMarks(env)]).catch((e) => console.error('purgeChat', String(e).slice(0, 120)))); },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });
@@ -178,6 +181,15 @@ async function admin(req, env, url) {
     return json(env, { ok: true });
   }
   // ── договори (персональні дані розшифровуються лише тут) ──
+  if (req.method === 'GET' && path === '/ai') return json(env, await adminAiGet(env));
+  if (req.method === 'PUT' && path === '/ai') return json(env, await adminAiSet(env, await req.json().catch(() => ({}))));
+  if (req.method === 'POST' && path === '/ai/morning-preview') {
+    try { return json(env, await adminMorningPreview(env)); } catch (e) { return json(env, { error: String(e.message || e).slice(0, 300) }, 200); }
+  }
+  if (req.method === 'POST' && path === '/ai/test') {
+    try { return json(env, await adminAiTest(env, (await req.json().catch(() => ({}))).text)); }
+    catch (e) { return json(env, { error: String(e.message || e).slice(0, 300) }, 200); }
+  }
   if (req.method === 'GET' && path === '/contracts') return json(env, { contracts: await adminContracts(env) });
   if (req.method === 'DELETE' && (m = path.match(/^\/contracts\/(\d{1,9})$/))) {
     const r = await env.DB.prepare('DELETE FROM contracts WHERE number = ?1').bind(+m[1]).run();
@@ -305,6 +317,9 @@ async function handleMessage(msg, env, ctx) {
 
   // відповідь на привітання бота (у будь-якому чаті, де він є)
   if (await maybeTeaseReply(msg, env)) return;
+
+  // живе спілкування (ШІ): відповіді на повідомлення бота, згадки в групах, особисті чати
+  if (ctx && await maybeChat(msg, env, ctx)) return;
 
   // /id працює скрізь — щоб дізнатися chat_id групи для ALLOWED_CHATS
   if (/^\/id(@\w+)?$/i.test(text)) return await reply(env, msg, `chat_id: ${chatId}`);

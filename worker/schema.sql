@@ -55,3 +55,22 @@ CREATE TABLE IF NOT EXISTS push_group_cars (
   code TEXT NOT NULL,
   PRIMARY KEY (chat_id, code)
 );
+
+-- договори: лічильник номерів, шаблон (base64) і чернетки живуть у kv; персональні дані — зашифровані в contracts.data
+CREATE TABLE IF NOT EXISTS kv (
+  k TEXT PRIMARY KEY,
+  v TEXT
+);
+INSERT OR IGNORE INTO kv (k, v) VALUES ('contract_counter', '655');   -- наступний договір матиме номер 656
+
+CREATE TABLE IF NOT EXISTS contracts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  number INTEGER UNIQUE NOT NULL,
+  data TEXT NOT NULL,              -- AES-GCM(JSON з даними клієнта)
+  version INTEGER NOT NULL DEFAULT 0,
+  last_file_id TEXT,               -- Telegram file_id останнього PDF
+  last_msg INTEGER,                -- id останнього оброблюваного повідомлення (захист від повторної доставки)
+  owner_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);

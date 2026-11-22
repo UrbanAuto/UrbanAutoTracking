@@ -11,6 +11,11 @@ SITE_URL = "https://urbanauto.github.io/UrbanAutoTracking"
 # З якого домену дозволено читати API (або "*")
 ALLOWED_ORIGIN = "https://urbanauto.github.io"
 
+# Договори: Telegram-ID користувачів, яким дозволено /договір (лише в особистому чаті з ботом)
+CONTRACT_USERS = "602387747"
+# Кінцева дата дії договору (підставляється в п. 6.1)
+CONTRACT_VALID_UNTIL = "31.12.2027"
+
 [triggers]
 crons = ["* * * * *"]   # щохвилини: фото з буфера, що не знайшли підписаний альбом, прикріплюються до поточного авто
 

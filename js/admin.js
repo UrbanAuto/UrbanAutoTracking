@@ -154,8 +154,9 @@
 
   function setTab(name) {
     for (const t of document.querySelectorAll('#tabs .tab')) t.classList.toggle('on', t.dataset.tab === name);
-    $('carsWrap').classList.toggle('hidden', name !== 'cars'); $('groupsWrap').classList.toggle('hidden', name !== 'groups');
+    $('carsWrap').classList.toggle('hidden', name !== 'cars'); $('groupsWrap').classList.toggle('hidden', name !== 'groups'); $('contractsWrap').classList.toggle('hidden', name !== 'contracts');
     if (name === 'groups') loadGroups();
+    if (name === 'contracts') loadContracts();
   }
   $('tabs').addEventListener('click', (e) => { const b = e.target.closest('.tab'); if (b) setTab(b.dataset.tab); });
 
@@ -240,6 +241,24 @@
     } catch (e2) { toast('Помилка мережі'); }
   });
 
+
+  /* ── договори ── */
+  async function loadContracts() {
+    let list; try { list = (await api('/contracts')).contracts; } catch (e) { return; }
+    const box = $('contracts'); box.textContent = '';
+    if (!list.length) { box.appendChild(el('div', 'card empty', 'Договорів ще немає. У Telegram надішліть боту /договір.')); return; }
+    for (const c of list) {
+      const card = el('article', 'car'); const head = el('div', 'car-head'); const left = el('div');
+      left.appendChild(el('h3', null, `Договір №${c.number}`));
+      left.appendChild(el('div', 'sub', (c.name || 'ПІБ ще не вказано') + (c.phone ? ' · ' + c.phone : '')));
+      head.appendChild(left); head.appendChild(el('span', 'chip ' + (c.filled === c.total ? 'active' : 'pending'), c.filled === c.total ? 'Готовий' : `Дані ${c.filled}/${c.total}`)); card.appendChild(head);
+      card.appendChild(el('div', 'sub', `Версія PDF: ${c.version} · створено ${fmtDate(c.created_at)} · оновлено ${fmtDate(c.updated_at)}`));
+      const act = el('div', 'car-act'); const del = el('button', 'btn sm danger', 'Видалити'); del.type = 'button';
+      del.addEventListener('click', () => ask({ title: `Видалити договір №${c.number}?`, text: 'Договір і персональні дані клієнта буде видалено остаточно. PDF, надіслані в Telegram, залишаться в чаті — їх видаліть вручну.', block: false,
+        onYes: async () => { await api('/contracts/' + c.number, { method: 'DELETE' }); toast('Договір видалено'); loadContracts(); } }));
+      act.appendChild(del); card.appendChild(act); box.appendChild(card);
+    }
+  }
   /* ── вхід/вихід ── */
   $('loginForm').addEventListener('submit', (e) => {
     e.preventDefault(); const v = $('tokenInput').value.trim(); if (!v) return;

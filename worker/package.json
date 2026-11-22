@@ -12,5 +12,8 @@
   "type": "commonjs",
   "devDependencies": {
     "wrangler": "^4.166.0"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
   }
 }

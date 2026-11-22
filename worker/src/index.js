@@ -3,6 +3,8 @@
 //   GET  /api/car/:code      → дані авто для кабінету клієнта
 //   GET  /photo/:code/:id    → фото (Telegram-токен ніколи не потрапляє до клієнта)
 
+import { handleContract, adminContracts } from './contract.js';
+
 // Етапи. Бот шукає в тексті повідомлення ключові слова (укр/рос/англ).
 // Явно вказати етап можна й так: #етап3 або #3. Слова підлаштуємо під ваші реальні повідомлення.
 // Повідомлення CargoPlus мають вигляд «📍 Статус: Розформований», «📅 Розформування контейнера: 20.11.2026»,
@@ -33,7 +35,7 @@ export default {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });
     try {
-      if (req.method === 'POST' && url.pathname === '/webhook') return await webhook(req, env);
+      if (req.method === 'POST' && url.pathname === '/webhook') return await webhook(req, env, ctx);
       if (url.pathname.startsWith('/admin/api/')) return await admin(req, env, url);
       let m;
       if ((m = url.pathname.match(/^\/api\/car\/([A-Za-z0-9]{6,32})$/))) return await apiCar(m[1].toUpperCase(), env);
@@ -175,6 +177,14 @@ async function admin(req, env, url) {
     await env.DB.prepare('DELETE FROM blocked WHERE key = ?1').bind(decodeURIComponent(m[1])).run();
     return json(env, { ok: true });
   }
+  // ── договори (персональні дані розшифровуються лише тут) ──
+  if (req.method === 'GET' && path === '/contracts') return json(env, { contracts: await adminContracts(env) });
+  if (req.method === 'DELETE' && (m = path.match(/^\/contracts\/(\d{1,9})$/))) {
+    const r = await env.DB.prepare('DELETE FROM contracts WHERE number = ?1').bind(+m[1]).run();
+    await env.DB.prepare('DELETE FROM kv WHERE k LIKE ?1 AND v LIKE ?2').bind('cdraft:%', `{"number":${+m[1]},%`).run();
+    return json(env, { ok: true, deleted: r.meta?.changes || 0 });
+  }
+
   // ── групи для пуш-сповіщень ──
   if (req.method === 'GET' && path === '/groups') {
     const { results } = await env.DB.prepare('SELECT chat_id, title, type, status, scope, last_error, created_at FROM push_groups ORDER BY created_at DESC').all();
@@ -221,7 +231,7 @@ async function admin(req, env, url) {
 }
 
 /* ───────────── Telegram webhook ───────────── */
-async function webhook(req, env) {
+async function webhook(req, env, ctx) {
   if (env.WEBHOOK_SECRET && req.headers.get('x-telegram-bot-api-secret-token') !== env.WEBHOOK_SECRET)
     return new Response('forbidden', { status: 403 });
   let update;
@@ -255,7 +265,7 @@ async function webhook(req, env) {
   if (msg && update.backfill) msg.__quiet = true; // імпорт історії (tools/backfill.mjs): без сповіщень у чат
   if (update.backfill_reset && msg) await env.DB.prepare("DELETE FROM ctx WHERE key LIKE ?1").bind(`${msg.chat.id}:%`).run(); // старт імпорту — без застарілого «поточного авто»
   if (msg) {
-    try { await handleMessage(msg, env); } catch (e) { console.error('handleMessage', e); }
+    try { await handleMessage(msg, env, ctx); } catch (e) { console.error('handleMessage', e); }
   }
   return new Response('ok'); // завжди 200, щоб Telegram не повторював «биті» повідомлення
 }
@@ -283,12 +293,15 @@ function parseInfo(text) {
   return { vin, lot, title, eventTs, signal, booking, container, orderId, route, captionLabel };
 }
 
-async function handleMessage(msg, env) {
+async function handleMessage(msg, env, ctx) {
   const chatId = String(msg.chat.id);
   const text = (msg.text || msg.caption || '').trim();
   // Бізнес-чат (режим «Секретар»): беремо лише вхідні від співрозмовника, без команд
   if (msg.business_connection_id && (msg.from?.id !== msg.chat.id || text.startsWith('/'))) return;
   const ctxKey = `${chatId}:${msg.message_thread_id || 0}`;
+
+  // договори: команди й дані клієнта в особистому чаті з дозволеним користувачем (CONTRACT_USERS)
+  if (!msg.business_connection_id && ctx && await handleContract(msg, env, ctx)) return;
 
   // відповідь на привітання бота (у будь-якому чаті, де він є)
   if (await maybeTeaseReply(msg, env)) return;

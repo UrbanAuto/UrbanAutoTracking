@@ -69,7 +69,7 @@
       const title = el('span', 's-title', s.title);
       if (state === 'now') title.appendChild(el('span', 's-badge', 'зараз'));
       head.appendChild(title);
-      head.appendChild(el('span', 's-date', !s.date ? 'очікується' : s.planned ? 'очікується ' + fmtDay(s.date) : fmtDate(s.date)));
+      head.appendChild(el('span', 's-date', !s.date ? (state === 'done' ? 'пройдено' : 'очікується') : s.planned ? 'очікується ' + fmtDay(s.date) : fmtDate(s.date)));
       li.appendChild(head);
 
       if (s.photos.length) {

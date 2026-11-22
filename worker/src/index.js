@@ -10,12 +10,13 @@
 const STAGES = [
   { id: 1, title: 'Викуплено з Аукціону',      re: /викуплен|выкуплен|куплен|призначен|назначен|won|bought|purchased/i },
   { id: 2, title: 'Отримання з аукціону',      re: /отриман|отримали|забра[лв]|вивез|вывез|pick.?up|picked/i },
-  { id: 3, title: 'Доставка',                  re: /доставк|прямує|в дорозі|в дороге|в пути|транспорт|delivery/i },
+  { id: 3, title: 'Доставка',                  re: /прийом|прием|автовоз|доставк|прямує|в дорозі|в дороге|в пути|транспорт|delivery/i },
   { id: 4, title: 'Майданчик',                 re: /майданчик|площадк|склад|yard|warehouse/i },
   { id: 5, title: 'Завантаження в контейнер',  re: /завантаж|погруз|loaded|в контейнер/i },
   { id: 6, title: 'Розформування контейнера',  re: /розформ|розвантаж|devan|unload/i },
 ];
-const BOOKING_RE = /(?:номер\s+)?(?:букінг\w*|booking)\s*(?:№|#|:|-)?\s*([^\n]{3,40})/i;
+const CONTAINER_RE = /номер\s+контейнер[а-яіїєґ]*\s*(?:№|#|:|-)?\s*([^\n]{3,40})/i;   // «Номер контейнера: ABCDEFG2299 (MAERSK)»
+const BOOKING_RE = /(?:номер\s+)?(?:букінг[а-яіїєґ]*|booking)\s*(?:№|#|:|-)?\s*([^\n]{3,40})/i;
 
 const VIN_RE = /(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])/i;
 const TITLE_RE = /^\s*((?:19|20)\d{2}\s+[^\n]{2,})$/m;   // «2015 FORD ESCAPE SE»
@@ -64,7 +65,7 @@ const clientLink = (env, code) => `${(env.SITE_URL || '').replace(/\/$/, '')}/?c
 
 /* ───────────── API для клієнта ───────────── */
 async function apiCar(code, env) {
-  const car = await env.DB.prepare('SELECT code, vin, lot, booking, title FROM cars WHERE code = ?1').bind(code).first();
+  const car = await env.DB.prepare('SELECT code, vin, lot, booking, container, title FROM cars WHERE code = ?1').bind(code).first();
   if (!car) return json(env, { error: 'not_found' }, 404);
   const { results } = await env.DB.prepare('SELECT id, stage, photo_id IS NOT NULL AS has_photo, ts FROM events WHERE code = ?1 ORDER BY ts, id').bind(code).all();
 
@@ -80,7 +81,7 @@ async function apiCar(code, env) {
   }
   for (const st of stages) st.planned = !!st.date && st.date > now;
   // Сирі тексти з групи клієнту не віддаємо — лише етап, дату й фото.
-  return json(env, { code: car.code, title: car.title, vin: car.vin, lot: car.lot, booking: car.booking, current, updated: updated || null, stages });
+  return json(env, { code: car.code, title: car.title, vin: car.vin, lot: car.lot, booking: car.booking, container: car.container, current, updated: updated || null, stages });
 }
 
 async function photo(req, ctx, env, code, id) {
@@ -125,9 +126,10 @@ function parseInfo(text) {
   // Для пошуку етапу прибираємо посилання, VIN, назву авто й «54 фото», щоб вони не давали хибних збігів
   const signal = text
     .replace(/https?:\/\/\S+/g, ' ').replace(new RegExp(VIN_RE.source, 'gi'), ' ')
-    .replace(TITLE_RE, ' ').replace(/\d+\s*фото/gi, ' ').replace(/VIN:?/gi, ' ').replace(new RegExp(BOOKING_RE.source, 'gi'), ' ');
+    .replace(TITLE_RE, ' ').replace(/\d+\s*фото/gi, ' ').replace(/VIN:?/gi, ' ').replace(new RegExp(BOOKING_RE.source, 'gi'), ' ').replace(new RegExp(CONTAINER_RE.source, 'gi'), ' ');
   const booking = (text.match(BOOKING_RE) || [])[1]?.replace(/[\s.,;]+$/, '').trim() || null;
-  return { vin, lot, title, eventTs, signal, booking };
+  const container = (text.match(CONTAINER_RE) || [])[1]?.replace(/[\s.,;]+$/, '').trim() || null;
+  return { vin, lot, title, eventTs, signal, booking, container };
 }
 
 async function handleMessage(msg, env) {
@@ -151,7 +153,7 @@ async function handleMessage(msg, env) {
   }
 
   // 1) до якого авто належить повідомлення
-  const { vin, lot, title, eventTs, signal, booking } = parseInfo(text);
+  const { vin, lot, title, eventTs, signal, booking, container } = parseInfo(text);
   const photos = msg.photo?.length ? msg.photo : null;
   const photoId = photos ? photos[photos.length - 1].file_id : null;
   const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : null;
@@ -177,13 +179,14 @@ async function handleMessage(msg, env) {
   if (title) await env.DB.prepare("UPDATE cars SET title = ?1 WHERE code = ?2 AND (title LIKE 'VIN %' OR title LIKE 'Лот %')").bind(title, code).run();
   // букінг (номер/текст після слова «Букінг» або «Booking»)
   if (booking) await env.DB.prepare('UPDATE cars SET booking = ?1 WHERE code = ?2').bind(booking, code).run();
+  if (container) await env.DB.prepare('UPDATE cars SET container = ?1 WHERE code = ?2').bind(container, code).run();
 
   // 2) який етап
   let stage = detectStage(signal) || groupEvent?.stage;
   if (!stage && photoId) {
-    // фото без підпису (наступні альбоми) — в етап останньої події цього авто
-    stage = (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 ORDER BY id DESC LIMIT 1').bind(code).first())?.stage;
-    // у авто ще немає жодної події (фото обігнало підписаний альбом) — тримаємо в буфері
+    // фото без підпису (наступні альбоми) — в етап останнього фото-альбому цього авто: продовження альбому належить йому,
+    // а не статусу з окремого тексту. Якщо фото-альбомів ще немає — тримаємо в буфері до підписаного альбому.
+    stage = (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 AND photo_id IS NOT NULL ORDER BY id DESC LIMIT 1').bind(code).first())?.stage;
     if (!stage) return void await bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId);
   }
 
@@ -204,14 +207,15 @@ async function handleMessage(msg, env) {
   // 3) сповіщення в чат: що саме додано. Фото-альбом без підпису мовчки дописується в етап (щоб не було десятків відповідей).
   const silentPhoto = photoId && msg.media_group_id && !text;
   if (silentPhoto) return;
-  if (!stage && !booking && !created && !(vin || lot)) return;
-  if (stage && !added && !created && !booking) return; // дубль того, що вже збережено
-  await notify(env, msg, { code, created, stage, ts, booking, photoId, vin, unrecognized: !stage && !booking && (vin || lot) });
+  const info = booking || container;
+  if (!stage && !info && !created && !(vin || lot)) return;
+  if (stage && !added && !created && !info) return; // дубль того, що вже збережено
+  await notify(env, msg, { code, created, stage, ts, booking, container, photoId, unrecognized: !stage && !info && (vin || lot) });
 }
 
 const fmtDate = (ts) => new Date(ts).toLocaleDateString('uk-UA', { timeZone: 'Europe/Kyiv' });
 
-async function notify(env, msg, { code, created, stage, ts, booking, photoId, unrecognized }) {
+async function notify(env, msg, { code, created, stage, ts, booking, container, photoId, unrecognized }) {
   const car = await env.DB.prepare('SELECT title, vin, lot, booking FROM cars WHERE code = ?1').bind(code).first();
   const lines = [created ? '🆕 Створено картку авто' : '✅ Додано в трекер', `🚗 ${car.title}`];
   if (car.vin) lines.push(`VIN: ${car.vin}`);
@@ -223,7 +227,8 @@ async function notify(env, msg, { code, created, stage, ts, booking, photoId, un
       lines.push(`📷 Фото в етапі: ${n}`);
     }
   }
-  if (booking) lines.push(`📦 Букінг: ${booking}`);
+  if (container) lines.push(`📦 Контейнер: ${container}`);
+  if (booking) lines.push(`🗒️ Букінг: ${booking}`);
   if (unrecognized) lines.push('⚠️ Етап у повідомленні не розпізнано — додайте вручну: /stage 1…' + STAGES.length);
   lines.push(`🔗 ${clientLink(env, code)}`);
   await reply(env, msg, lines.join('\n'));

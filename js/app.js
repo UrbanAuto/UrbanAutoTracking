@@ -48,9 +48,13 @@
       const c = el('span', 'chip', k + ' '); c.appendChild(el('b', null, v)); chips.appendChild(c);
     }
 
-    // Букінг — окремий блок зліва, під назвою авто
-    $('bookingBox').classList.toggle('hidden', !car.booking);
-    $('bookingVal').textContent = car.booking || '';
+    // Букінг і контейнер — окремий блок зліва, під назвою авто
+    const info = $('infoBox'); info.textContent = '';
+    for (const [k, v] of [['Букінг', car.booking], ['Контейнер', car.container]]) {
+      if (!v) continue;
+      const row = el('div', 'inforow'); row.appendChild(el('span', 'k', k)); row.appendChild(el('span', 'v', v)); info.appendChild(row);
+    }
+    info.classList.toggle('hidden', !info.childNodes.length);
 
     const total = car.stages.length;
     const cur = car.stages.find((s) => s.id === car.current);

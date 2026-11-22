@@ -50,7 +50,7 @@
 
     // Букінг і контейнер — окремий блок зліва, під назвою авто
     const info = $('infoBox'); info.textContent = '';
-    for (const [k, v] of [['Букінг', car.booking], ['Контейнер', car.container]]) {
+    for (const [k, v] of [['Маршрут', car.route], ['Букінг', car.booking], ['Контейнер', car.container]]) {
       if (!v) continue;
       const row = el('div', 'inforow'); row.appendChild(el('span', 'k', k)); row.appendChild(el('span', 'v', v)); info.appendChild(row);
     }

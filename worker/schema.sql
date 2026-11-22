@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS cars (
   lot TEXT,
   booking TEXT,                   -- номер букінга
   container TEXT,                 -- номер контейнера
+  route TEXT,                     -- маршрут («Лос-Анджелес (США) → Клайпеда (Литва)»)
   order_id TEXT,                  -- номер замовлення CargoPlus (…/cars/order_20171)
   title TEXT NOT NULL,
   created_at INTEGER NOT NULL
@@ -15,6 +16,7 @@ CREATE TABLE IF NOT EXISTS events (
   stage INTEGER NOT NULL,         -- 1..8
   photo_id TEXT,                  -- Telegram file_id (NULL = лише відмітка етапу)
   thumb_id TEXT,                  -- мініатюра для сітки фото
+  uid TEXT,                       -- file_unique_id фото (для дедуплікації)
   ts INTEGER NOT NULL,            -- мс, час повідомлення в Telegram
   chat_id TEXT,
   msg_id INTEGER,

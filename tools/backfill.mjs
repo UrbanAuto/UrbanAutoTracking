@@ -43,7 +43,7 @@ for (let id = from; id <= to; id++) {
   if (senderId === BOT_ID || senderId === OWNER || text.startsWith('/')) { skipped++; continue; }
 
   const update = {
-    update_id: 8_000_000 + id, backfill: true,
+    update_id: 8_000_000 + id, backfill: true, backfill_reset: ok === 0,
     message: {
       message_id: id, date: origin.date || f.date, chat: { id: GROUP, type: 'supergroup' },
       from: { id: senderId || 0, is_bot: true }, text: f.text, caption: f.caption, photo: f.photo,

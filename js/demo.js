@@ -5,7 +5,7 @@
     'Завантаження в контейнер', 'Розформування контейнера'];
   const photos = [1, 2, 3, 12, 2, 0];
   window.DEMO_CAR = {
-    code: 'DEMO2024', title: 'Honda Accord 2020', vin: '1HGCV1F30LA012345', lot: '48213907', booking: 'BILL0922122 (MAERSK)', container: 'ABCDEFG2299 (MAERSK)',
+    code: 'DEMO2024', title: 'Honda Accord 2020', vin: '1HGCV1F30LA012345', lot: '48213907', route: 'Лос-Анджелес (США) → Клайпеда (Литва)', booking: 'BILL0922122 (MAERSK)', container: 'ABCDEFG2299 (MAERSK)',
     current: 5, updated: now - 2 * day,
     stages: titles.map((t, i) => ({
       id: i + 1, title: t,

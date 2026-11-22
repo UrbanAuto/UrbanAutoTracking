@@ -34,6 +34,7 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });
     try {
       if (req.method === 'POST' && url.pathname === '/webhook') return await webhook(req, env);
+      if (url.pathname.startsWith('/admin/api/')) return await admin(req, env, url);
       let m;
       if ((m = url.pathname.match(/^\/api\/car\/([A-Za-z0-9]{6,32})$/))) return await apiCar(m[1].toUpperCase(), env);
       if ((m = url.pathname.match(/^\/photo\/([A-Za-z0-9]{6,32})\/(\d+)$/))) return await photo(req, ctx, env, m[1].toUpperCase(), +m[2]);
@@ -47,7 +48,7 @@ export default {
 };
 
 /* ───────────── допоміжне ───────────── */
-const cors = (env) => ({ 'access-control-allow-origin': env.ALLOWED_ORIGIN || '*', 'access-control-allow-methods': 'GET,OPTIONS' });
+const cors = (env) => ({ 'access-control-allow-origin': env.ALLOWED_ORIGIN || '*', 'access-control-allow-methods': 'GET,DELETE,OPTIONS', 'access-control-allow-headers': 'authorization,content-type', 'access-control-max-age': '600' });
 const json = (env, data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...cors(env) } });
 
@@ -103,6 +104,77 @@ async function photo(req, ctx, env, code, id) {
   const res = new Response(r.body, { headers: { 'content-type': type, 'cache-control': 'public, max-age=86400', ...cors(env) } });
   ctx.waitUntil(cache.put(req, res.clone()));
   return res;
+}
+
+/* ───────────── адмін-панель (токен у заголовку Authorization: Bearer …) ───────────── */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function safeEqual(a, b) {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b);
+  let d = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) d |= (x[i] || 0) ^ (y[i] || 0);
+  return d === 0;
+}
+
+async function admin(req, env, url) {
+  const auth = req.headers.get('authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  if (!env.ADMIN_TOKEN || !safeEqual(token, env.ADMIN_TOKEN)) { await sleep(500); return json(env, { error: 'unauthorized' }, 401); }
+
+  const path = url.pathname.slice('/admin/api'.length);
+  let m;
+  // список усіх авто
+  if (req.method === 'GET' && path === '/cars') {
+    const now = Date.now();
+    const { results } = await env.DB.prepare(`
+      SELECT c.code, c.title, c.vin, c.order_id, c.booking, c.container, c.route, c.created_at,
+        (SELECT MAX(stage) FROM events e WHERE e.code = c.code AND e.ts <= ?1) AS current,
+        (SELECT COUNT(*) FROM events e WHERE e.code = c.code AND e.photo_id IS NOT NULL) AS photos,
+        (SELECT COUNT(*) FROM events e WHERE e.code = c.code) AS events,
+        (SELECT MAX(e.ts) FROM events e WHERE e.code = c.code AND e.ts <= ?1) AS updated
+      FROM cars c ORDER BY COALESCE(updated, c.created_at) DESC`).bind(now).all();
+    const buffered = (await env.DB.prepare("SELECT COUNT(*) AS n FROM events WHERE code = ''").first())?.n || 0;
+    return json(env, { total: STAGES.length, stages: STAGES.map((s) => s.title), buffered, cars: results.map((c) => ({ ...c, current: c.current || 0 })) });
+  }
+  // деталі авто: етапи, фото, події
+  if (req.method === 'GET' && (m = path.match(/^\/car\/([A-Za-z0-9]{6,32})$/))) {
+    const code = m[1].toUpperCase();
+    const car = await env.DB.prepare('SELECT code, title, vin, lot, order_id, booking, container, route, created_at FROM cars WHERE code = ?1').bind(code).first();
+    if (!car) return json(env, { error: 'not_found' }, 404);
+    const { results } = await env.DB.prepare('SELECT id, stage, ts, msg_id, photo_id IS NOT NULL AS photo FROM events WHERE code = ?1 ORDER BY stage, ts, id').bind(code).all();
+    return json(env, { car, stages: STAGES.map((s) => s.title), events: results });
+  }
+  // видалення авто разом з усіма подіями та фото; block=1 — ще й ігнорувати його повідомлення надалі
+  if (req.method === 'DELETE' && (m = path.match(/^\/car\/([A-Za-z0-9]{6,32})$/))) {
+    const code = m[1].toUpperCase();
+    const car = await env.DB.prepare('SELECT vin, order_id FROM cars WHERE code = ?1').bind(code).first();
+    if (!car) return json(env, { error: 'not_found' }, 404);
+    const stmts = [
+      env.DB.prepare('DELETE FROM events WHERE code = ?1').bind(code),
+      env.DB.prepare('DELETE FROM ctx WHERE code = ?1').bind(code),
+      env.DB.prepare('DELETE FROM cars WHERE code = ?1').bind(code),
+    ];
+    if (url.searchParams.get('block') === '1') {
+      if (car.vin) stmts.push(env.DB.prepare('INSERT OR IGNORE INTO blocked (key, note, created_at) VALUES (?1, ?2, ?3)').bind(car.vin, 'видалено в адмінці', Date.now()));
+      if (car.order_id) stmts.push(env.DB.prepare('INSERT OR IGNORE INTO blocked (key, note, created_at) VALUES (?1, ?2, ?3)').bind(`order:${car.order_id}`, 'видалено в адмінці', Date.now()));
+    }
+    await env.DB.batch(stmts);
+    return json(env, { ok: true });
+  }
+  // видалення однієї події/фото
+  if (req.method === 'DELETE' && (m = path.match(/^\/event\/(\d+)$/))) {
+    const r = await env.DB.prepare('DELETE FROM events WHERE id = ?1').bind(+m[1]).run();
+    return json(env, { ok: true, deleted: r.meta?.changes || 0 });
+  }
+  // «чорний список» і розблокування
+  if (req.method === 'GET' && path === '/blocked') {
+    const { results } = await env.DB.prepare('SELECT key, note, created_at FROM blocked ORDER BY created_at DESC').all();
+    return json(env, { blocked: results });
+  }
+  if (req.method === 'DELETE' && (m = path.match(/^\/blocked\/(.+)$/))) {
+    await env.DB.prepare('DELETE FROM blocked WHERE key = ?1').bind(decodeURIComponent(m[1])).run();
+    return json(env, { ok: true });
+  }
+  return json(env, { error: 'not_found' }, 404);
 }
 
 /* ───────────── Telegram webhook ───────────── */
@@ -171,6 +243,12 @@ async function handleMessage(msg, env) {
   const photoId = photos ? photos[photos.length - 1].file_id : doc ? doc.file_id : null;
   const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : doc ? (doc.thumbnail?.file_id || doc.file_id) : null;
   const uid = (photos ? photos[photos.length - 1].file_unique_id : doc?.file_unique_id) || null; // однакове фото, надіслане двічі, має однаковий uid
+  // Авто, видалене в адмінці з позначкою «не додавати знову», ігноруємо (за VIN або номером замовлення)
+  if (vin || orderId) {
+    const b = await env.DB.prepare('SELECT 1 AS x FROM blocked WHERE key IN (?1, ?2)').bind(vin || '-', orderId ? `order:${orderId}` : '-').first();
+    if (b) return;
+  }
+
   // Є назва етапу (підпис «VIN_Назва» або рядок «Статус: Назва»), але в трекері такого етапу немає → повідомлення пропускаємо
   const statusLabel = (text.match(/Статус:?\s*([^\n]+)/i) || [])[1]?.trim() || null;
   const label = captionLabel || statusLabel;

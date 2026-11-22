@@ -32,3 +32,10 @@ CREATE TABLE IF NOT EXISTS ctx (
   key TEXT PRIMARY KEY,
   code TEXT NOT NULL
 );
+
+-- авто, видалені в адмінці з позначкою «не додавати знову»: ключ = VIN або order:<номер замовлення>
+CREATE TABLE IF NOT EXISTS blocked (
+  key TEXT PRIMARY KEY,
+  note TEXT,
+  created_at INTEGER NOT NULL
+);

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Urban Auto — Адмін-панель</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2339a0ff'/%3E%3Ctext x='16' y='23' font-family='Arial' font-weight='800' font-size='20' text-anchor='middle' fill='%2307122b'%3EU%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/style.css?v=20261122d" />
+  <link rel="stylesheet" href="css/admin.css?v=20261122d" />
+</head>
+<body class="admin">
+  <header class="top">
+    <div class="brand"><span class="brand-mark">U</span> Urban Auto <span class="adm-tag">адмін</span></div>
+    <p class="tagline">Усі авто в базі трекера</p>
+  </header>
+
+  <main class="wrap">
+    <!-- Вхід -->
+    <section class="card hidden" id="loginView">
+      <h2>Вхід в адмін-панель</h2>
+      <p class="note">Введіть адмін-токен. Він видається власнику трекера й нікому не показується.</p>
+      <form id="loginForm" class="lotline">
+        <input id="tokenInput" type="password" autocomplete="current-password" spellcheck="false" placeholder="Адмін-токен" />
+        <button type="submit">Увійти</button>
+      </form>
+      <label class="remember"><input type="checkbox" id="remember" /> Запам'ятати на цьому пристрої</label>
+      <p class="err hidden" id="loginErr"></p>
+    </section>
+
+    <!-- Панель -->
+    <div id="panel" class="hidden">
+      <section class="card">
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Пошук: назва, VIN, букінг, контейнер…" autocomplete="off" />
+          <button type="button" class="btn" id="refreshBtn" title="Оновити">⟳</button>
+          <button type="button" class="btn ghost" id="logoutBtn">Вийти</button>
+        </div>
+        <div class="stats" id="stats"></div>
+      </section>
+
+      <section class="cars" id="cars"></section>
+
+      <section class="card hidden" id="blockedCard">
+        <h2>Заблоковані <span class="tag">не додаються автоматично</span></h2>
+        <div id="blockedList"></div>
+      </section>
+    </div>
+    <p class="foot err hidden" id="loadErr"></p>
+  </main>
+
+  <!-- Деталі авто -->
+  <div class="modal hidden" id="detail" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <button type="button" class="modal-x" id="detailClose" aria-label="Закрити">×</button>
+      <div id="detailBody"></div>
+    </div>
+  </div>
+
+  <!-- Підтвердження видалення -->
+  <div class="modal hidden" id="confirm" role="dialog" aria-modal="true">
+    <div class="modal-box small">
+      <h3 id="confirmTitle"></h3>
+      <p id="confirmText" class="note"></p>
+      <label class="remember hidden" id="blockRow"><input type="checkbox" id="blockChk" /> Не додавати це авто знову (ігнорувати повідомлення з цим VIN)</label>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="confirmNo">Скасувати</button>
+        <button type="button" class="btn danger" id="confirmYes">Видалити</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast"></div>
+
+  <script src="js/config.js?v=20261122d"></script>
+  <script src="js/admin.js?v=20261122d"></script>
+</body>
+</html>

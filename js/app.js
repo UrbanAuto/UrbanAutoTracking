@@ -13,9 +13,9 @@
   let timer = null;
   let gallery = [], gIdx = 0;
 
-  const fmtDate = (ts) => new Date(ts).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' });
-  const fmtDay = (ts) => new Date(ts).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long' });
-  const fmtDateTime = (ts) => new Date(ts).toLocaleString('uk-UA', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+  const fmtDate = (ts) => new Date(ts).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/Kyiv' });
+  const fmtDay = (ts) => new Date(ts).toLocaleDateString('uk-UA', { day: 'numeric', month: 'long', timeZone: 'Europe/Kyiv' });
+  const fmtDateTime = (ts) => new Date(ts).toLocaleString('uk-UA', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Kyiv' });
   const photoUrl = (c, id, thumb) => (demo ? window.demoPhoto(String(id)) : `${CFG.API_URL}/photo/${c}/${id}${thumb ? '?s=thumb' : ''}`);
   const MAX_THUMBS = 8; // у сітці одразу показуємо стільки фото, решта — по кнопці
 
@@ -87,6 +87,8 @@
           const idx = gallery.push(full) - 1;
           const b = el('button', i >= MAX_THUMBS ? 'extra hidden' : ''); b.type = 'button'; b.setAttribute('aria-label', 'Відкрити фото');
           const img = el('img'); img.src = photoUrl(car.code, id, true); img.loading = 'lazy'; img.alt = s.title;
+          // фото, яке не вдалося завантажити (дуже велике/пошкоджене), лишається плиткою-заглушкою, а повний розмір спробує відкрити лайтбокс
+          img.addEventListener('error', () => { b.classList.add('broken'); img.remove(); b.textContent = '🖼'; }, { once: true });
           b.appendChild(img); b.addEventListener('click', () => openLb(idx));
           ph.appendChild(b);
         });

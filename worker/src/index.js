@@ -27,6 +27,8 @@ const LOT_RE = /(?:lot|лот)\s*[#№:]?\s*(\d{6,9})/i;
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export default {
+  // щохвилини (див. [triggers] у wrangler.toml)
+  async scheduled(event, env, ctx) { ctx.waitUntil(flushBuffer(env)); },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });
@@ -107,7 +109,8 @@ async function photo(req, ctx, env, code, id) {
 async function webhook(req, env) {
   if (env.WEBHOOK_SECRET && req.headers.get('x-telegram-bot-api-secret-token') !== env.WEBHOOK_SECRET)
     return new Response('forbidden', { status: 403 });
-  const update = await req.json();
+  let update;
+  try { update = await req.json(); } catch { return new Response('bad request', { status: 400 }); }
   const msg = update.message || update.channel_post || update.business_message; // business_message — режим «Секретар» (чат з ботом CargoPlus)
   if (msg && update.backfill) msg.__quiet = true; // імпорт історії (tools/backfill.mjs): без сповіщень у чат
   if (update.backfill_reset && msg) await env.DB.prepare("DELETE FROM ctx WHERE key LIKE ?1").bind(`${msg.chat.id}:%`).run(); // старт імпорту — без застарілого «поточного авто»
@@ -163,9 +166,11 @@ async function handleMessage(msg, env) {
   // 1) до якого авто належить повідомлення
   const { vin, lot, title, eventTs, signal, booking, container, orderId, route, captionLabel } = parseInfo(text);
   const photos = msg.photo?.length ? msg.photo : null;
-  const photoId = photos ? photos[photos.length - 1].file_id : null;
-  const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : null;
-  const uid = photos ? photos[photos.length - 1].file_unique_id || null : null; // однакове фото, надіслане двічі, має однаковий uid
+  // Зображення, надіслане «файлом» (без стиснення), теж вважаємо фото. Жодне фото не відкидаємо за розміром чи якістю.
+  const doc = !photos && msg.document && /^image\//i.test(msg.document.mime_type || '') ? msg.document : null;
+  const photoId = photos ? photos[photos.length - 1].file_id : doc ? doc.file_id : null;
+  const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : doc ? (doc.thumbnail?.file_id || doc.file_id) : null;
+  const uid = (photos ? photos[photos.length - 1].file_unique_id : doc?.file_unique_id) || null; // однакове фото, надіслане двічі, має однаковий uid
   // Є назва етапу (підпис «VIN_Назва» або рядок «Статус: Назва»), але в трекері такого етапу немає → повідомлення пропускаємо
   const statusLabel = (text.match(/Статус:?\s*([^\n]+)/i) || [])[1]?.trim() || null;
   const label = captionLabel || statusLabel;
@@ -192,7 +197,7 @@ async function handleMessage(msg, env) {
       .bind(vin || null, lot || null, orderId, code).run().catch(() => {}); // UNIQUE(vin) може збігтися з іншою карткою — тоді просто пропускаємо
   }
   if (!code && msg.media_group_id) {
-    groupEvent = await env.DB.prepare('SELECT code, stage FROM events WHERE group_id = ?1 AND chat_id = ?2 LIMIT 1').bind(msg.media_group_id, chatId).first();
+    groupEvent = await env.DB.prepare('SELECT code, stage FROM events WHERE group_id = ?1 AND chat_id = ?2 AND code <> \'\' LIMIT 1').bind(msg.media_group_id, chatId).first();
     code = groupEvent?.code;
   }
   if (!code && msg.reply_to_message) {
@@ -228,7 +233,13 @@ async function handleMessage(msg, env) {
   if (!stage && photoId) {
     // фото без підпису (наступні альбоми) — в етап останнього фото-альбому цього авто: продовження альбому належить йому,
     // а не статусу з окремого тексту. Якщо фото-альбомів ще немає — тримаємо в буфері до підписаного альбому.
-    stage = (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 AND photo_id IS NOT NULL ORDER BY id DESC LIMIT 1').bind(code).first())?.stage;
+    // Фото з альбому, чий підписаний член ще не оброблений (паралельна доставка), не чіпаємо: у буфері його забере підписане фото
+    if (msg.media_group_id && !groupEvent) {
+      groupEvent = await env.DB.prepare('SELECT code, stage FROM events WHERE group_id = ?1 AND chat_id = ?2 AND code <> \'\' LIMIT 1').bind(msg.media_group_id, chatId).first();
+      if (groupEvent) stage = groupEvent.stage;
+      else return void await bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId, uid);
+    }
+    if (!stage) stage = (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 AND photo_id IS NOT NULL ORDER BY id DESC LIMIT 1').bind(code).first())?.stage;
     if (!stage) return void await bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId, uid);
   }
 
@@ -285,25 +296,33 @@ async function notify(env, msg, { code, created, stage, ts, booking, container, 
   await reply(env, msg, lines.join('\n'));
 }
 
+// Фото, що понад 45 секунд чекали в буфері (підписаний альбом так і не прийшов), прикріплюємо до «поточного» авто їхнього чату
+// й до його останнього етапу: краще показати фото, ніж втратити.
+async function flushBuffer(env) {
+  const cutoff = Date.now() - 45 * 1000;
+  const { results } = await env.DB.prepare("SELECT DISTINCT chat_id FROM events WHERE code = '' AND recv < ?1").bind(cutoff).all();
+  for (const { chat_id } of results) {
+    const row = await env.DB.prepare("SELECT code FROM ctx WHERE key LIKE ?1 AND key NOT LIKE 'skip:%' LIMIT 1").bind(`${chat_id}:%`).first();
+    if (!row) continue;
+    const stage = (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 AND photo_id IS NOT NULL ORDER BY id DESC LIMIT 1').bind(row.code).first())?.stage
+      || (await env.DB.prepare('SELECT stage FROM events WHERE code = ?1 ORDER BY id DESC LIMIT 1').bind(row.code).first())?.stage || 1;
+    await env.DB.prepare("UPDATE events SET code = ?1, stage = ?2 WHERE code = '' AND chat_id = ?3 AND recv < ?4").bind(row.code, stage, chat_id, cutoff).run();
+    await dedupePhotos(env, row.code);
+  }
+}
+
 // Прибирає дублі фото в межах етапу однієї картки (однакові file_unique_id) — лишається найраніше збережене
 async function dedupePhotos(env, code) {
   await env.DB.prepare('DELETE FROM events WHERE code = ?1 AND uid IS NOT NULL AND id NOT IN (SELECT MIN(id) FROM events WHERE code = ?1 AND uid IS NOT NULL GROUP BY uid, stage)').bind(code).run();
 }
 
-// Фото без підпису прийшло раніше, ніж ми дізналися, чиє авто: зберігаємо в буфері (code = '').
-// Після вставки перевіряємо контекст ще раз — він міг з'явитися, поки ми писали в базу.
+// Фото без підпису прийшло раніше, ніж ми дізналися, до якого воно етапу: зберігаємо в буфері (code = '').
 async function bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId, uid) {
   const ts = (msg.forward_origin?.date || msg.date) * 1000;
+  // Фото лишається в буфері, доки його не забере підписаний альбом або (за ≈1 хв) cron прикріпить до поточного авто.
+  // Не прикріплюємо одразу: порядок доставки паралельних повідомлень випадковий, і «останній етап» міг би бути хибним.
   await env.DB.prepare("INSERT OR IGNORE INTO events (code, stage, photo_id, thumb_id, uid, ts, chat_id, msg_id, group_id, recv) VALUES ('',0,?1,?2,?8,?3,?4,?5,?6,?7)")
     .bind(photoId, thumbId, ts, chatId, msg.message_id, msg.media_group_id || null, Date.now(), uid).run();
-  const code = (await env.DB.prepare('SELECT code FROM ctx WHERE key = ?1').bind(ctxKey).first())?.code;
-  if (!code) return null;
-  const stage = (await env.DB.prepare("SELECT stage FROM events WHERE code = ?1 AND photo_id IS NOT NULL ORDER BY id DESC LIMIT 1").bind(code).first())?.stage;
-  // У авто ще немає жодного фото-етапу — лишаємо в буфері, його забере підписаний альбом
-  if (stage) {
-    await env.DB.prepare("UPDATE events SET code = ?1, stage = ?2 WHERE code = '' AND chat_id = ?3 AND msg_id = ?4").bind(code, stage, chatId, msg.message_id).run();
-    await dedupePhotos(env, code);
-  }
   return null; // фото вже збережено; далі обробляти нічого
 }
 

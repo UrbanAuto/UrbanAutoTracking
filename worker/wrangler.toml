@@ -11,6 +11,9 @@ SITE_URL = "https://urbanauto.github.io/UrbanAutoTracking"
 # З якого домену дозволено читати API (або "*")
 ALLOWED_ORIGIN = "https://urbanauto.github.io"
 
+[triggers]
+crons = ["* * * * *"]   # щохвилини: фото з буфера, що не знайшли підписаний альбом, прикріплюються до поточного авто
+
 [[d1_databases]]
 binding = "DB"
 database_name = "urban-auto-tracking"

@@ -232,6 +232,8 @@ async function webhook(req, env) {
     try {
       const st = mc.new_chat_member?.status, id = String(mc.chat.id);
       if (st === 'member' || st === 'administrator') {
+        const was = mc.old_chat_member?.status;
+        if (!was || was === 'left' || was === 'kicked') await greet(env, id); // привітання лише коли бота справді щойно додали (не при підвищенні до адміна)
         await env.DB.prepare("INSERT INTO push_groups (chat_id, title, type, status, scope, created_at) VALUES (?1,?2,?3,'pending','cars',?4) ON CONFLICT(chat_id) DO UPDATE SET title = ?2, type = ?3, last_error = NULL, status = CASE WHEN status = 'error' THEN 'active' ELSE status END")
           .bind(id, mc.chat.title || id, mc.chat.type, Date.now()).run();
       } else if (st === 'left' || st === 'kicked') {
@@ -287,6 +289,9 @@ async function handleMessage(msg, env) {
   // Бізнес-чат (режим «Секретар»): беремо лише вхідні від співрозмовника, без команд
   if (msg.business_connection_id && (msg.from?.id !== msg.chat.id || text.startsWith('/'))) return;
   const ctxKey = `${chatId}:${msg.message_thread_id || 0}`;
+
+  // відповідь на привітання бота (у будь-якому чаті, де він є)
+  if (await maybeTeaseReply(msg, env)) return;
 
   // /id працює скрізь — щоб дізнатися chat_id групи для ALLOWED_CHATS
   if (/^\/id(@\w+)?$/i.test(text)) return await reply(env, msg, `chat_id: ${chatId}`);
@@ -440,6 +445,30 @@ async function notify(env, msg, { code, created, stage, ts, booking, container, 
   await reply(env, msg, lines.join('\n'));
   // Пуш у підключені групи (крім групи-джерела, яка вже отримала відповідь, і крім імпорту історії та попереджень)
   if (!msg.__quiet && !unrecognized) await pushToGroups(env, String(msg.chat.id), code, lines.filter((l) => !l.startsWith('⚠️')).join('\n'), photoId);
+}
+
+/* ───────────── привітання в новій групі ───────────── */
+const GREETING_MARK = 'Всім привіт, ось і я';
+const GREETING = `👋 ${GREETING_MARK}! 🚗💨
+
+Я — бот Urban Auto Tracking. Буду надсилати вам сповіщення по всіх куплених машинах: де вони зараз, на якому етапі і з фоточками, щоб ви не нервувались і не питали «ну де моя тачка?» 😄
+
+Обіцяю: пишу тільки по ділу, без флуду, і гроші в борг не прошу 💸
+
+P.S. Це повідомлення краще нікому не відповідати. Ну, або відповісти. Я не ображаюсь 😏`;
+
+async function greet(env, chatId) {
+  try { await tg(env, 'sendMessage', { chat_id: chatId, text: GREETING }); } catch (e) { console.error('greet', chatId, String(e)); }
+}
+
+// Якщо хтось відповідає саме на привітання бота — інтригуємо
+async function maybeTeaseReply(msg, env) {
+  const r = msg.reply_to_message;
+  if (!r || msg.from?.is_bot || msg.business_connection_id) return false;
+  const botId = Number(String(env.BOT_TOKEN).split(':')[0]);
+  if (r.from?.id !== botId || !(r.text || '').includes(GREETING_MARK)) return false;
+  await tg(env, 'sendMessage', { chat_id: msg.chat.id, text: 'Побачите.... 😏', message_thread_id: msg.message_thread_id, reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } }).catch(console.error);
+  return true;
 }
 
 /* ───────────── пуш у підключені групи ───────────── */

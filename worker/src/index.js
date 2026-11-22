@@ -114,7 +114,8 @@ async function webhook(req, env) {
 }
 
 const reply = (env, msg, text) => msg.business_connection_id ? null : // у чужому бізнес-чаті від імені бота нічого не пишемо
-  tg(env, 'sendMessage', { chat_id: msg.chat.id, text, message_thread_id: msg.message_thread_id, reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } }).catch(console.error);
+  tg(env, 'sendMessage', { chat_id: msg.chat.id, text, message_thread_id: msg.message_thread_id, // На повідомлення іншого бота — звичайне повідомлення, а не reply: так воно не адресоване йому й не запускає цикл бот↔бот
+    ...(msg.from?.is_bot ? {} : { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } }) }).catch(console.error);
 
 // Розбір повідомлення: VIN, назва авто, дата події, «сигнал» для визначення етапу.
 function parseInfo(text) {

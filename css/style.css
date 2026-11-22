@@ -98,41 +98,10 @@ button[type=submit] { height: 46px; padding: 0 20px; border: 0; border-radius: 1
 .lb-prev { left: 12px; } .lb-next { right: 12px; }
 .lb-x:hover, .lb-nav:hover { background: var(--accent-soft); }
 
-/* ---------- Новорічний декор ---------- */
-.snow { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
-.top, .wrap { position: relative; z-index: 1; }
-.festive-btn { position: fixed; top: 14px; right: 14px; z-index: 5; width: 40px; height: 40px; border-radius: 50%;
-  border: 1px solid var(--card-line); background: var(--card); color: var(--muted); font-size: 18px; cursor: pointer;
-  backdrop-filter: blur(8px); transition: all .2s; }
-.festive-btn[aria-pressed="true"] { color: #fff; border-color: var(--accent); box-shadow: 0 0 14px var(--accent-soft); }
-
-/* Гірлянда по верхньому краю карток: дріт + лампочки, дві групи моргають по черзі */
-.festive .card { position: relative; margin-top: 8px; }
-.festive .card::before, .festive .card::after {
-  content: ''; position: absolute; left: 14px; right: 14px; top: -9px; height: 34px; pointer-events: none;
-  background-repeat: repeat-x; background-size: 176px 34px;
-}
-.festive .card::before {
-  background-image:
-    radial-gradient(circle 12px at 22px 17px, rgba(255,77,90,.5), transparent),
-    radial-gradient(circle 4.5px at 22px 17px, #ff4d5a 0 3.6px, transparent 4.5px),
-    radial-gradient(circle 12px at 110px 17px, rgba(74,216,141,.5), transparent),
-    radial-gradient(circle 4.5px at 110px 17px, #4ad88d 0 3.6px, transparent 4.5px),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='34'%3E%3Cpath d='M0 6 Q22 20 44 6' fill='none' stroke='%23556b8a' stroke-width='1.4'/%3E%3C/svg%3E");
-  background-size: 176px 34px, 176px 34px, 176px 34px, 176px 34px, 44px 34px;
-  animation: twA 2.4s ease-in-out infinite;
-}
-.festive .card::after {
-  background-image:
-    radial-gradient(circle 12px at 66px 17px, rgba(255,200,70,.5), transparent),
-    radial-gradient(circle 4.5px at 66px 17px, #ffc846 0 3.6px, transparent 4.5px),
-    radial-gradient(circle 12px at 154px 17px, rgba(57,160,255,.55), transparent),
-    radial-gradient(circle 4.5px at 154px 17px, #39a0ff 0 3.6px, transparent 4.5px);
-  animation: twB 2.4s ease-in-out infinite;
-}
-@keyframes twA { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
-@keyframes twB { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .festive .card::before, .festive .card::after { animation: none; } }
+/* ---------- Сніг ---------- */
+/* Поверх вмісту, не ловить кліки. Висота lvh — стабільна, не стрибає від адресного рядка на телефоні. */
+.snow { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100lvh; z-index: 3; pointer-events: none;
+  transform: translateZ(0); }
 
 @media (max-width: 520px) {
   .card { padding: 18px; }

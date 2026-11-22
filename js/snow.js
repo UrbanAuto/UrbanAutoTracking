@@ -1,54 +1,56 @@
-/* Новорічний декор: сніг (canvas). Гірлянда — чистий CSS (.card::before/::after).
- * Кнопка ❄ у шапці вмикає/вимикає ефекти; вибір запам'ятовується. Поважає prefers-reduced-motion. */
+/* Сніг (canvas) поверх сторінки. Без кнопок і гірлянди.
+ * Для плавності на телефонах:
+ *  – канвас лежить ПОВЕРХ вмісту й не заважає кліками (pointer-events: none): картки з backdrop-filter під ним не
+ *    перемальовуються кожен кадр, як це було, коли сніг був позаду;
+ *  – висота полотна стабільна (lvh) і сніжинки не перестворюються, коли ховається/з'являється адресний рядок
+ *    браузера (це змінює innerHeight під час прокручування) — перебудова лише при зміні ширини (поворот екрана);
+ *  – ~30 кадрів/с, менше сніжинок на малих екранах, пауза у фоновій вкладці;
+ *  – не вмикається при prefers-reduced-motion. */
 (function () {
-  const KEY = 'tr-festive';
-  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  let on = true;
-  try { on = localStorage.getItem(KEY) !== 'off'; } catch (e) {}
-  if (reduce) on = false;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
   const canvas = document.createElement('canvas');
   canvas.className = 'snow';
   canvas.setAttribute('aria-hidden', 'true');
-  document.body.prepend(canvas);
+  document.body.appendChild(canvas);
   const ctx = canvas.getContext('2d');
-  let w, h, flakes = [], raf = 0;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const FRAME = 1000 / 30;
+  let W = 0, H = 0, lastW = 0, flakes = [], raf = 0, last = 0;
 
-  function resize() {
-    const d = window.devicePixelRatio || 1;
-    w = canvas.width = innerWidth * d; h = canvas.height = innerHeight * d;
-    canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
-    const n = Math.min(90, Math.round(innerWidth / 14));
+  function build() {
+    lastW = innerWidth;
+    // розмір полотна береться з CSS-розмірів (ширина 100%, висота lvh — стабільна), тож сніжинки лишаються круглими
+    W = canvas.width = Math.round((canvas.clientWidth || lastW) * dpr);
+    H = canvas.height = Math.round((canvas.clientHeight || innerHeight) * dpr);
+    const n = Math.max(18, Math.min(70, Math.round(lastW / 18)));
     flakes = Array.from({ length: n }, () => ({
-      x: Math.random() * w, y: Math.random() * h,
-      r: (Math.random() * 2.2 + 0.8) * d, v: (Math.random() * 0.7 + 0.35) * d,
-      s: Math.random() * Math.PI * 2, a: Math.random() * 0.5 + 0.35,
+      x: Math.random() * W, y: Math.random() * H,
+      r: (Math.random() * 2 + 0.8) * dpr, v: (Math.random() * 0.6 + 0.3) * dpr * 1.6,
+      s: Math.random() * 6.283, a: Math.random() * 0.45 + 0.35,
     }));
   }
+
   function frame(t) {
-    ctx.clearRect(0, 0, w, h);
-    for (const f of flakes) {
-      f.y += f.v; f.x += Math.sin(t / 1500 + f.s) * 0.35;
-      if (f.y > h + 5) { f.y = -5; f.x = Math.random() * w; }
-      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 6.283);
-      ctx.fillStyle = `rgba(255,255,255,${f.a})`; ctx.fill();
-    }
     raf = requestAnimationFrame(frame);
+    if (t - last < FRAME) return;
+    last = t;
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#fff';
+    for (const f of flakes) {
+      f.y += f.v; f.x += Math.sin(t / 1500 + f.s) * 0.5 * dpr;
+      if (f.y > H + 5) { f.y = -5; f.x = Math.random() * W; }
+      ctx.globalAlpha = f.a;
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 6.283); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
-  const btn = document.createElement('button');
-  btn.type = 'button'; btn.className = 'festive-btn'; btn.title = 'Новорічний настрій'; btn.textContent = '❄';
-  document.body.appendChild(btn);
+  function start() { if (!raf) raf = requestAnimationFrame(frame); }
+  function stop() { cancelAnimationFrame(raf); raf = 0; }
 
-  function apply() {
-    document.body.classList.toggle('festive', on);
-    btn.setAttribute('aria-pressed', on);
-    cancelAnimationFrame(raf);
-    if (on) { resize(); raf = requestAnimationFrame(frame); } else ctx.clearRect(0, 0, w || 0, h || 0);
-  }
-  btn.addEventListener('click', () => {
-    on = !on; try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch (e) {} apply();
-  });
-  addEventListener('resize', () => { if (on) resize(); });
-  apply();
+  build(); start();
+  // лише зміна ширини (поворот телефона, зміна вікна) перебудовує сніг; зміна висоти від адресного рядка ігнорується
+  addEventListener('resize', () => { if (innerWidth !== lastW) build(); });
+  document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
 })();

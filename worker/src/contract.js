@@ -5,8 +5,9 @@ import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
 const MONTHS = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
 const MALE_A = new Set(['микита', 'лука', 'сава', 'кузьма', 'хома', 'фома', 'ілля', 'гаврила', 'данила', 'мирона']);
 const BLANK = '_______________';
-const FIELD_NAMES = { name: 'ПІБ', taxId: 'РНОКПП', address: 'Адреса', phone: 'Телефон', email: 'Email' };
+const FIELD_NAMES = { name: 'ПІБ', taxId: 'РНОКПП', address: 'Адреса', phone: 'Телефон' };
 const DRAFT_TTL = 24 * 3600 * 1000;
+const retentionMs = (env) => (+env.CONTRACT_RETENTION_HOURS || 24) * 3600 * 1000;
 
 /* ───────────── розбір даних клієнта ───────────── */
 const LABELS = [
@@ -14,7 +15,6 @@ const LABELS = [
   ['taxId', /^(?:рнокпп|ірнокпп|іпн|інн|ідентифікаційний\s+код|податковий\s+номер|код)\s*[:\-–—=]\s*(.*)$/i],
   ['address', /^(?:адреса(?:\s+реєстрації)?|місце\s+реєстрації|address)\s*[:\-–—=]\s*(.*)$/i],
   ['phone', /^(?:тел(?:ефон)?\.?|моб(?:ільний)?\.?|phone)\s*[:\-–—=]\s*(.*)$/i],
-  ['email', /^(?:e-?mail|пошта|почта|ел\.?\s?пошта)\s*[:\-–—=]\s*(.*)$/i],
 ];
 const NAME_WORD = "[А-ЯІЇЄҐA-Z][а-яіїєґa-z'’ʼ-]+";
 
@@ -54,10 +54,6 @@ const VALIDATORS = {
     const p = normalizePhone(v);
     return p ? { value: p } : { error: 'формат +380XXXXXXXXX або 0XXXXXXXXX' };
   },
-  email(v) {
-    const e = v.trim().toLowerCase();
-    return /^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']{2,}$/.test(e) && e.length <= 120 ? { value: e } : { error: 'некоректна адреса' };
-  },
 };
 
 /** Розбирає повідомлення → { fields, errors, recognized }. Рядки «Поле: значення» мають пріоритет, решту намагаємось розпізнати за виглядом. */
@@ -72,8 +68,7 @@ export function parseClientData(text) {
     // без підпису: розпізнаємо за виглядом
     const digits = line.replace(/\D/g, '');
     const phoneLike = /^[+\d()\s-]{9,20}$/.test(line) && normalizePhone(line) && (line.startsWith('+') || /[\s()-]/.test(line) || digits.startsWith('0') || digits.length === 12);
-    if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(line)) raw.email = line;
-    else if (phoneLike) raw.phone = line;                                  // РНОКПП ніколи не починається з 0, тому 0XXXXXXXXX — це телефон
+    if (phoneLike) raw.phone = line;                                  // РНОКПП ніколи не починається з 0, тому 0XXXXXXXXX — це телефон
     else if (/^\d{10}$/.test(line)) raw.taxId = line;
     else if (new RegExp(`^${NAME_WORD}(?:\\s+${NAME_WORD}){1,3}$`).test(line)) raw.name = line;
     else if (/(?:^|\s)(?:м\.|місто|вул\.|вулиця|просп\.|пров\.|буд\.|обл\.|кв\.)/i.test(line)) raw.address = line;
@@ -113,7 +108,7 @@ export function buildValues(fields, number, env, now = new Date()) {
     CLIENT_TITLE: g === 'f' ? 'Громадянка' : g === 'm' ? 'Громадянин' : 'Громадянин(ка)',
     CLIENT_WHICH: g === 'f' ? 'якої' : g === 'm' ? 'якого' : 'якого/якої',
     CLIENT_NAME: fields.name || BLANK, CLIENT_SHORT: fields.name ? shortName(fields.name) : BLANK,
-    CLIENT_TAX_ID: fields.taxId || BLANK, CLIENT_ADDRESS: fields.address || BLANK, CLIENT_PHONE: fields.phone || BLANK, CLIENT_EMAIL: fields.email || BLANK,
+    CLIENT_TAX_ID: fields.taxId || BLANK, CLIENT_ADDRESS: fields.address || BLANK, CLIENT_PHONE: fields.phone || BLANK,
   };
 }
 
@@ -225,7 +220,7 @@ async function renderAndSend(env, chatId, c, note) {
   const version = c.version + 1;
   const docx = fillDocx(await getTemplate(env), buildValues(c.fields, c.number, env));
   const st = statusLines(c);
-  const caption = `${note ? note + '\n' : ''}📎 Договір №${c.number} · версія ${version}\n${st.text}`;
+  const caption = `${note ? note + '\n' : ''}📎 Договір №${c.number} · версія ${version}\n${st.text}\n🔒 Дані клієнта видаляться з бази за ${+env.CONTRACT_RETENTION_HOURS || 24} год. або після /завершити; PDF лишається в цьому чаті.`;
   let fileId, sentAs = 'pdf';
   try {
     const pdf = await convertToPdf(env, docx);
@@ -255,7 +250,6 @@ const HELP = (n) => `📄 Створено договір №${n} (чернет�
 • РНОКПП: 1234567890
 • Адреса: м. Київ, вул. Хрещатик, 1, кв. 2
 • Телефон: +380501234567
-• Email: client@example.com
 Після кожного повідомлення я оновлю договір і надішлю PDF (нова версія).
 /pdf — створити ще раз · /завершити — закінчити · /договори — список`;
 
@@ -281,21 +275,22 @@ export async function handleContract(msg, env, ctx) {
         if (!c) return void await say(env, chatId, `Договору №${n} не знайдено.`);
         await setDraft(env, chatId, n);
         const st = statusLines(c);
-        if (c.last_file_id) await tgJson(env, 'sendDocument', { chat_id: chatId, document: c.last_file_id, caption: `📎 Договір №${n} · версія ${c.version}\n${st.text}\nНадсилайте нові дані, щоб оновити.` });
-        else await say(env, chatId, `Відкрито договір №${n}. ${st.text}\nНадсилайте дані або /pdf.`);
+        const gone = c.purged_at ? '\n🔒 Дані клієнта вже видалено з бази — PDF вище лишився в чаті. Для нової версії надішліть усі дані знову.' : '';
+        if (c.last_file_id) await tgJson(env, 'sendDocument', { chat_id: chatId, document: c.last_file_id, caption: `📎 Договір №${n} · версія ${c.version}\n${c.purged_at ? '' : st.text + '\n'}Надсилайте нові дані, щоб оновити.${gone}` });
+        else await say(env, chatId, `Відкрито договір №${n}. ${c.purged_at ? '' : st.text}\nНадсилайте дані або /pdf.${gone}`);
       })());
     }
     if (name === 'договори' || name === 'contracts') {
       return run((async () => {
-        const { results } = await env.DB.prepare('SELECT number, data, version, updated_at FROM contracts ORDER BY number DESC LIMIT 10').all();
+        const { results } = await env.DB.prepare('SELECT number, data, version, updated_at, purged_at FROM contracts ORDER BY number DESC LIMIT 10').all();
         if (!results.length) return void await say(env, chatId, 'Договорів ще немає. /договір — створити.');
         const lines = [];
-        for (const r of results) { const f = await decryptJson(env, r.data).catch(() => ({})); lines.push(`№${r.number} · ${f.name ? shortName(f.name) : '— без ПІБ —'} · v${r.version} · ${stamp(r.updated_at)}`); }
+        for (const r of results) { const f = await decryptJson(env, r.data).catch(() => ({})); lines.push(`№${r.number} · ${f.name ? shortName(f.name) : r.purged_at ? '🔒 дані видалено' : '— без ПІБ —'} · v${r.version} · ${stamp(r.updated_at)}`); }
         await say(env, chatId, '📚 Останні договори:\n' + lines.join('\n') + '\n\nВідкрити: /договір 656');
       })());
     }
     if (name === 'завершити' || name === 'done') {
-      return run((async () => { const d = await getDraft(env, chatId); await setDraft(env, chatId, null); await say(env, chatId, d ? `Готово. Договір №${d.number} збережено. Відкрити пізніше: /договір ${d.number}` : 'Активного договору немає.'); })());
+      return run((async () => { const d = await getDraft(env, chatId); await setDraft(env, chatId, null); if (d) await purgeContract(env, d.number); await say(env, chatId, d ? `Готово. Дані клієнта по договору №${d.number} видалено з бази, PDF лишився в цьому чаті. Щоб оновити договір пізніше — /договір ${d.number} і надішліть дані знову.` : 'Активного договору немає.'); })());
     }
     if (name === 'pdf') {
       return run((async () => {
@@ -337,11 +332,27 @@ export async function handleContract(msg, env, ctx) {
 
 /* ───────────── адмін-API ───────────── */
 export async function adminContracts(env) {
-  const { results } = await env.DB.prepare('SELECT number, data, version, owner_id, created_at, updated_at FROM contracts ORDER BY number DESC').all();
+  const { results } = await env.DB.prepare('SELECT number, data, version, owner_id, created_at, updated_at, purged_at FROM contracts ORDER BY number DESC').all();
   const out = [];
   for (const r of results) {
     const f = await decryptJson(env, r.data).catch(() => ({}));
-    out.push({ number: r.number, name: f.name || null, phone: f.phone || null, filled: Object.keys(FIELD_NAMES).filter((k) => f[k]).length, total: Object.keys(FIELD_NAMES).length, version: r.version, created_at: r.created_at, updated_at: r.updated_at });
+    out.push({ number: r.number, name: f.name || null, phone: f.phone || null, filled: Object.keys(FIELD_NAMES).filter((k) => f[k]).length, total: Object.keys(FIELD_NAMES).length, version: r.version, purged: !!r.purged_at, created_at: r.created_at, updated_at: r.updated_at });
   }
   return out;
+}
+
+
+/* ───────────── видалення персональних даних з бази ───────────── */
+// PDF лишається в переписці Telegram; у базі після очищення зберігаються лише номер, версія і file_id останнього файлу.
+export async function purgeContract(env, number) {
+  const empty = await encryptJson(env, {});
+  await env.DB.prepare('UPDATE contracts SET data = ?1, purged_at = ?2 WHERE number = ?3 AND purged_at IS NULL').bind(empty, Date.now(), number).run();
+  await env.DB.prepare('DELETE FROM kv WHERE k LIKE ?1 AND v LIKE ?2').bind('cdraft:%', `{"number":${number},%`).run();
+}
+
+export async function purgeContracts(env) {
+  const cutoff = Date.now() - retentionMs(env);
+  const { results } = await env.DB.prepare('SELECT number FROM contracts WHERE purged_at IS NULL AND updated_at < ?1').bind(cutoff).all();
+  for (const r of results) await purgeContract(env, r.number);
+  return results.length;
 }

@@ -3,7 +3,7 @@
 //   GET  /api/car/:code      → дані авто для кабінету клієнта
 //   GET  /photo/:code/:id    → фото (Telegram-токен ніколи не потрапляє до клієнта)
 
-import { handleContract, adminContracts } from './contract.js';
+import { handleContract, adminContracts, purgeContracts } from './contract.js';
 
 // Етапи. Бот шукає в тексті повідомлення ключові слова (укр/рос/англ).
 // Явно вказати етап можна й так: #етап3 або #3. Слова підлаштуємо під ваші реальні повідомлення.
@@ -30,7 +30,7 @@ const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
 export default {
   // щохвилини (див. [triggers] у wrangler.toml)
-  async scheduled(event, env, ctx) { ctx.waitUntil(flushBuffer(env)); },
+  async scheduled(event, env, ctx) { ctx.waitUntil(flushBuffer(env)); ctx.waitUntil(purgeContracts(env).catch((e) => console.error('purge', String(e).slice(0, 120)))); },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(env) });

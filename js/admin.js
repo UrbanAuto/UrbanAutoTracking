@@ -250,8 +250,8 @@
     for (const c of list) {
       const card = el('article', 'car'); const head = el('div', 'car-head'); const left = el('div');
       left.appendChild(el('h3', null, `Договір №${c.number}`));
-      left.appendChild(el('div', 'sub', (c.name || 'ПІБ ще не вказано') + (c.phone ? ' · ' + c.phone : '')));
-      head.appendChild(left); head.appendChild(el('span', 'chip ' + (c.filled === c.total ? 'active' : 'pending'), c.filled === c.total ? 'Готовий' : `Дані ${c.filled}/${c.total}`)); card.appendChild(head);
+      left.appendChild(el('div', 'sub', (c.name || (c.purged ? '🔒 Дані клієнта видалено з бази' : 'ПІБ ще не вказано')) + (c.phone ? ' · ' + c.phone : '')));
+      head.appendChild(left); head.appendChild(el('span', 'chip ' + (c.purged ? 'disabled' : c.filled === c.total ? 'active' : 'pending'), c.purged ? 'Дані видалено' : c.filled === c.total ? 'Готовий' : `Дані ${c.filled}/${c.total}`)); card.appendChild(head);
       card.appendChild(el('div', 'sub', `Версія PDF: ${c.version} · створено ${fmtDate(c.created_at)} · оновлено ${fmtDate(c.updated_at)}`));
       const act = el('div', 'car-act'); const del = el('button', 'btn sm danger', 'Видалити'); del.type = 'button';
       del.addEventListener('click', () => ask({ title: `Видалити договір №${c.number}?`, text: 'Договір і персональні дані клієнта буде видалено остаточно. PDF, надіслані в Telegram, залишаться в чаті — їх видаліть вручну.', block: false,

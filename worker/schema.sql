@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS contracts (
   version INTEGER NOT NULL DEFAULT 0,
   last_file_id TEXT,               -- Telegram file_id останнього PDF
   last_msg INTEGER,                -- id останнього оброблюваного повідомлення (захист від повторної доставки)
+  purged_at INTEGER,               -- коли персональні дані видалено з бази (PDF лишається в Telegram)
   owner_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL

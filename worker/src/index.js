@@ -166,13 +166,24 @@ async function handleMessage(msg, env) {
   const photoId = photos ? photos[photos.length - 1].file_id : null;
   const thumbId = photos ? photos[Math.min(1, photos.length - 1)].file_id : null;
   const uid = photos ? photos[photos.length - 1].file_unique_id || null : null; // однакове фото, надіслане двічі, має однаковий uid
+  // Є назва етапу (підпис «VIN_Назва» або рядок «Статус: Назва»), але в трекері такого етапу немає → повідомлення пропускаємо
+  const statusLabel = (text.match(/Статус:?\s*([^\n]+)/i) || [])[1]?.trim() || null;
+  const label = captionLabel || statusLabel;
+  const tagged = /#\s*(?:етап|этап|stage)?\s*[1-9]\b/i.test(text);
+  const unknownStage = !!label && !tagged && !detectStage(signal);
+  const skipKey = `skip:${chatId}:${msg.message_thread_id || 0}`;
+  // фото без підпису (продовження альбому) після пропущеного етапу — теж пропускаємо, щоб не потрапили в попередній етап
+  if (photoId && !text && !unknownStage) {
+    const sk = await env.DB.prepare('SELECT code FROM ctx WHERE key = ?1').bind(skipKey).first();
+    if (sk && Date.now() - Number(sk.code) < 10 * 60 * 1000) return;
+  }
   let code = null, groupEvent = null, created = false;
 
   // Спершу шукаємо вже існуючу картку (VIN → номер замовлення CargoPlus → лот): нову створюємо лише якщо такої немає
   if (vin) code = (await env.DB.prepare('SELECT code FROM cars WHERE vin = ?1').bind(vin).first())?.code;
   if (!code && orderId) code = (await env.DB.prepare('SELECT code FROM cars WHERE order_id = ?1').bind(orderId).first())?.code;
   if (!code && lot) code = (await env.DB.prepare('SELECT code FROM cars WHERE lot = ?1').bind(lot).first())?.code;
-  if (!code && (vin || lot)) {
+  if (!code && (vin || lot) && !unknownStage) {
     ({ code, created } = await createCar(env, { vin, lot, orderId, title: title || (vin ? `VIN ${vin}` : `Лот ${lot}`) }));
   }
   if (code && !created) {
@@ -188,7 +199,20 @@ async function handleMessage(msg, env) {
     code = (await env.DB.prepare('SELECT code FROM events WHERE chat_id = ?1 AND msg_id = ?2').bind(chatId, msg.reply_to_message.message_id).first())?.code;
   }
   if (!code) code = (await env.DB.prepare('SELECT code FROM ctx WHERE key = ?1').bind(ctxKey).first())?.code;
-  if (!code && photoId) code = await bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId, uid);
+  if (!code && photoId && !unknownStage) code = await bufferPhoto(env, msg, chatId, ctxKey, photoId, thumbId, uid);
+  if (unknownStage) {
+    // пропускаємо: нічого не зберігаємо (окрім букінга/контейнера/маршруту, якщо вони є), пишемо в групу, що такого етапу немає
+    await env.DB.prepare('INSERT INTO ctx (key, code) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET code = ?2').bind(skipKey, String(Date.now())).run();
+    if (code) {
+      if (booking) await env.DB.prepare('UPDATE cars SET booking = ?1 WHERE code = ?2').bind(booking, code).run();
+      if (container) await env.DB.prepare('UPDATE cars SET container = ?1 WHERE code = ?2').bind(container, code).run();
+      if (route) await env.DB.prepare('UPDATE cars SET route = ?1 WHERE code = ?2').bind(route, code).run();
+    }
+    const car = code ? await env.DB.prepare('SELECT title, vin FROM cars WHERE code = ?1').bind(code).first() : null;
+    await reply(env, msg, [`⚠️ Етапу «${label}» у трекері немає — повідомлення пропущено.`, car ? `🚗 ${car.title}${car.vin ? ` (VIN ${car.vin})` : ''}` : null,
+      'Доступні етапи: ' + STAGES.map((st) => `${st.id}. ${st.title}`).join('; ')].filter(Boolean).join('\n'));
+    return;
+  }
   if (!code) return; // не знаємо, чиє авто — ігноруємо
   await env.DB.prepare('INSERT INTO ctx (key, code) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET code = ?2').bind(ctxKey, code).run();
   // назва з повідомлення краща за заглушку «VIN …»
@@ -200,6 +224,7 @@ async function handleMessage(msg, env) {
 
   // 2) який етап
   let stage = detectStage(signal) || groupEvent?.stage;
+  if (detectStage(signal)) await env.DB.prepare('DELETE FROM ctx WHERE key = ?1').bind(skipKey).run(); // відомий етап — пропуск закінчено
   if (!stage && photoId) {
     // фото без підпису (наступні альбоми) — в етап останнього фото-альбому цього авто: продовження альбому належить йому,
     // а не статусу з окремого тексту. Якщо фото-альбомів ще немає — тримаємо в буфері до підписаного альбому.
@@ -230,16 +255,14 @@ async function handleMessage(msg, env) {
   const silentPhoto = photoId && msg.media_group_id && !text;
   if (silentPhoto) return;
   const info = booking || container || route;
-  // фото з підписом «VIN_Назва етапу», який бот не знає: фото потрапляє в останній етап, але про це попереджаємо
-  const unknownLabel = photoId && captionLabel && !detectStage(signal) ? captionLabel : null;
   if (!stage && !info && !created && !(vin || lot)) return;
-  if (stage && !added && !created && !info && !unknownLabel) return; // дубль того, що вже збережено
-  await notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unknownLabel, unrecognized: !stage && !info && (vin || lot) });
+  if (stage && !added && !created && !info) return; // дубль того, що вже збережено
+  await notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unrecognized: !stage && !info && (vin || lot) });
 }
 
 const fmtDate = (ts) => new Date(ts).toLocaleDateString('uk-UA', { timeZone: 'Europe/Kyiv' });
 
-async function notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unknownLabel, unrecognized }) {
+async function notify(env, msg, { code, created, stage, ts, booking, container, route, photoId, unrecognized }) {
   const car = await env.DB.prepare('SELECT title, vin, lot, booking FROM cars WHERE code = ?1').bind(code).first();
   const lines = [created ? '🆕 Створено картку авто' : '✅ Додано в трекер', `🚗 ${car.title}`];
   if (car.vin) lines.push(`VIN: ${car.vin}`);
@@ -257,7 +280,6 @@ async function notify(env, msg, { code, created, stage, ts, booking, container, 
   if (route) lines.push(`🧭 Маршрут: ${route}`);
   if (container) lines.push(`📦 Контейнер: ${container}`);
   if (booking) lines.push(`🗒️ Букінг: ${booking}`);
-  if (unknownLabel) lines.push(`⚠️ Етап «${unknownLabel}» не розпізнано — фото додано до етапу ${stage}/${STAGES.length}. Скажіть, до якого етапу це відносити.`);
   if (unrecognized) lines.push('⚠️ Етап у повідомленні не розпізнано — додайте вручну: /stage 1…' + STAGES.length);
   lines.push(`🔗 ${clientLink(env, code)}`);
   await reply(env, msg, lines.join('\n'));

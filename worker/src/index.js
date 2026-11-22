@@ -136,7 +136,7 @@ async function handleMessage(msg, env) {
   const ctxKey = `${chatId}:${msg.message_thread_id || 0}`;
 
   // /id працює скрізь — щоб дізнатися chat_id групи для ALLOWED_CHATS
-  if (/^\/id(@\w+)?$/i.test(text)) return void reply(env, msg, `chat_id: ${chatId}`);
+  if (/^\/id(@\w+)?$/i.test(text)) return await reply(env, msg, `chat_id: ${chatId}`);
 
   const allowed = (env.ALLOWED_CHATS || '').split(',').map((s) => s.trim()).filter(Boolean);
   if (!allowed.includes(chatId)) return; // чужі чати ігноруємо
@@ -208,14 +208,14 @@ async function handleCommand(msg, text, ctxKey, env) {
   const cur = async () => (await env.DB.prepare('SELECT code FROM ctx WHERE key = ?1').bind(ctxKey).first())?.code;
 
   if (cmd === '/start' || cmd === '/help') {
-    return void reply(env, msg,
+    return await reply(env, msg,
       'Команди:\n/car VIN Назва авто — створити/перейменувати авто\n/link — посилання для клієнта\n/stage N — вручну додати етап (1–8)\n/undo — видалити останню подію\n/id — chat_id групи\n\n' +
       'Етапи:\n' + STAGES.map((s) => `${s.id}. ${s.title}`).join('\n'));
   }
   if (cmd === '/car') {
     const vin = (arg.match(VIN_RE) || [])[0]?.toUpperCase();
     const title = arg.replace(VIN_RE, '').trim() || (vin ? `VIN ${vin}` : '');
-    if (!title) return void reply(env, msg, 'Формат: /car VIN Назва авто\nнапр.: /car 1HGCV1F30LA012345 Honda Accord 2020');
+    if (!title) return await reply(env, msg, 'Формат: /car VIN Назва авто\nнапр.: /car 1HGCV1F30LA012345 Honda Accord 2020');
     let code = vin ? (await env.DB.prepare('SELECT code FROM cars WHERE vin = ?1').bind(vin).first())?.code : null;
     if (code) {
       await env.DB.prepare('UPDATE cars SET title = ?1 WHERE code = ?2').bind(title, code).run();
@@ -226,22 +226,22 @@ async function handleCommand(msg, text, ctxKey, env) {
     return void await env.DB.prepare('INSERT INTO ctx (key, code) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET code = ?2').bind(ctxKey, code).run();
   }
   const code = await cur();
-  if (!code) return void reply(env, msg, 'Спершу вкажіть авто: /car VIN Назва або надішліть повідомлення з VIN.');
+  if (!code) return await reply(env, msg, 'Спершу вкажіть авто: /car VIN Назва або надішліть повідомлення з VIN.');
   if (cmd === '/link') {
     const car = await env.DB.prepare('SELECT title FROM cars WHERE code = ?1').bind(code).first();
-    return void reply(env, msg, `${car?.title}\n${clientLink(env, code)}`);
+    return await reply(env, msg, `${car?.title}\n${clientLink(env, code)}`);
   }
   if (cmd === '/stage') {
     const n = +arg;
-    if (!(n >= 1 && n <= 8)) return void reply(env, msg, 'Формат: /stage 1…8');
+    if (!(n >= 1 && n <= 8)) return await reply(env, msg, 'Формат: /stage 1…8');
     await env.DB.prepare('INSERT OR IGNORE INTO events (code, stage, photo_id, ts, chat_id, msg_id, group_id) VALUES (?1,?2,NULL,?3,?4,?5,NULL)')
       .bind(code, n, msg.date * 1000, chatId, msg.message_id).run();
-    return void reply(env, msg, `✅ Етап ${n}: ${STAGES[n - 1].title}`);
+    return await reply(env, msg, `✅ Етап ${n}: ${STAGES[n - 1].title}`);
   }
   if (cmd === '/undo') {
     const last = await env.DB.prepare('SELECT id, stage FROM events WHERE code = ?1 ORDER BY ts DESC, id DESC LIMIT 1').bind(code).first();
-    if (!last) return void reply(env, msg, 'Подій немає.');
+    if (!last) return await reply(env, msg, 'Подій немає.');
     await env.DB.prepare('DELETE FROM events WHERE id = ?1').bind(last.id).run();
-    return void reply(env, msg, `↩️ Видалено останню подію (етап ${last.stage}).`);
+    return await reply(env, msg, `↩️ Видалено останню подію (етап ${last.stage}).`);
   }
 }

@@ -265,7 +265,7 @@
   async function loadAi() {
     let c; try { c = await api('/ai'); } catch (e) { return; }
     aiDefault = c.defaultStyle; $('aiEnabled').checked = c.enabled; $('aiStyle').value = c.style;
-    $('mEnabled').checked = c.morning.enabled; $('mWeekdays').checked = c.morning.weekdaysOnly; $('mTime').value = c.morning.time;
+    $('fortuneEnabled').checked = c.fortune.enabled; $('mEnabled').checked = c.morning.enabled; $('mWeekdays').checked = c.morning.weekdaysOnly; $('mTime').value = c.morning.time;
     $('aiTestOut').textContent = c.available ? '' : '⚠️ Workers AI не підключено до воркера.';
   }
   $('aiEnabled').addEventListener('change', async () => { try { await api('/ai', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: $('aiEnabled').checked }) }); toast($('aiEnabled').checked ? 'Спілкування увімкнено' : 'Спілкування вимкнено'); } catch (e) { toast('Не вдалося зберегти'); } });
@@ -277,6 +277,13 @@
   $('mPreview').addEventListener('click', async () => {
     $('mOut').textContent = '…думаю';
     try { const r = await api('/ai/morning-preview', { method: 'POST' }); $('mOut').textContent = r.text ? '🤖 ' + r.text : '⚠️ ' + (r.error || 'порожня відповідь'); } catch (e) { $('mOut').textContent = '⚠️ Не вдалося отримати приклад'; }
+  });
+  $('fortuneEnabled').addEventListener('change', () => putFortune($('fortuneEnabled').checked));
+  async function putFortune(v) { try { await api('/ai', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fortune: { enabled: v } }) }); toast(v ? 'Ворожку увімкнено' : 'Ворожку вимкнено'); } catch (e) { toast('Не вдалося зберегти'); } }
+  $('aiFortuneBtn').addEventListener('click', async () => {
+    const t = $('aiTestText').value.trim() || 'Чи виграю я лот?'; $('aiTestOut').textContent = '…дивлюсь у кулю';
+    try { const r = await api('/ai/test', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t, fortune: true }) }); $('aiTestOut').textContent = r.reply ? '🔮 ' + r.reply : '⚠️ ' + (r.error || 'порожня відповідь'); }
+    catch (er) { $('aiTestOut').textContent = '⚠️ Не вдалося отримати відповідь'; }
   });
   $('aiReset').addEventListener('click', () => { $('aiStyle').value = aiDefault; toast('Натисніть «Зберегти»'); });
   $('aiTestForm').addEventListener('submit', async (e) => {

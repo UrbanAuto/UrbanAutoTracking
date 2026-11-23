@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2339a0ff'/%3E%3Ctext x='16' y='23' font-family='Arial' font-weight='800' font-size='20' text-anchor='middle' fill='%2307122b'%3EU%3C/text%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="css/style.css?v=20261123b" />
-  <link rel="stylesheet" href="css/admin.css?v=20261123b" />
+  <link rel="stylesheet" href="css/style.css?v=20261123c" />
+  <link rel="stylesheet" href="css/admin.css?v=20261123c" />
 </head>
 <body class="admin">
   <header class="top">
@@ -86,6 +86,7 @@
         <p class="note small">Час — за Києвом. Приклад показується тут і нікому не надсилається.</p>
         <p class="note" id="mOut"></p>
         <h2 style="margin-top:22px">Спілкування в чаті</h2>
+        <label class="remember"><input type="checkbox" id="fortuneEnabled" /> 🔮 Ворожка: «гадає» на виграш авто (команда /гадай, слова «гадай», «виграю лот?», «ворожка»)</label>
         <p class="note small" style="margin-top:14px">Стиль (тон і приклади відповідей):</p>
         <textarea id="aiStyle" rows="10" spellcheck="false"></textarea>
         <div class="actions" style="justify-content:flex-start">
@@ -93,7 +94,7 @@
           <button type="button" class="btn ghost" id="aiReset">Стиль за замовчуванням</button>
         </div>
         <p class="note small" style="margin-top:14px">Перевірити відповідь:</p>
-        <form id="aiTestForm" class="lotline"><input id="aiTestText" type="text" autocomplete="off" placeholder="Напишіть повідомлення, наприклад: де моя машина?" /><button type="submit">Спитати</button></form>
+        <form id="aiTestForm" class="lotline"><input id="aiTestText" type="text" autocomplete="off" placeholder="Напишіть повідомлення, наприклад: де моя машина?" /><button type="submit">Спитати</button><button type="button" id="aiFortuneBtn">🔮 Ворожка</button></form>
         <p class="note" id="aiTestOut"></p>
       </section>
      </div>
@@ -153,7 +154,7 @@
 
   <div class="toast hidden" id="toast"></div>
 
-  <script src="js/config.js?v=20261123b"></script>
-  <script src="js/admin.js?v=20261123b"></script>
+  <script src="js/config.js?v=20261123c"></script>
+  <script src="js/admin.js?v=20261123c"></script>
 </body>
 </html>

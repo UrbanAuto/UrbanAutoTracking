@@ -187,7 +187,7 @@ async function admin(req, env, url) {
     try { return json(env, await adminMorningPreview(env)); } catch (e) { return json(env, { error: String(e.message || e).slice(0, 300) }, 200); }
   }
   if (req.method === 'POST' && path === '/ai/test') {
-    try { return json(env, await adminAiTest(env, (await req.json().catch(() => ({}))).text)); }
+    try { const b = await req.json().catch(() => ({})); return json(env, await adminAiTest(env, b.text, b.fortune === true)); }
     catch (e) { return json(env, { error: String(e.message || e).slice(0, 300) }, 200); }
   }
   if (req.method === 'GET' && path === '/contracts') return json(env, { contracts: await adminContracts(env) });

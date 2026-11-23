@@ -28,6 +28,27 @@ const HIST_TTL = 3 * 3600 * 1000;       // пам'ять розмови в ос�
 const HIST_KEEP = 6;
 const VIN_RE = /(?<![A-Z0-9])[A-HJ-NPR-Z0-9]{17}(?![A-Z0-9])/;
 
+/* ───────────── Ворожка: «гадає» на виграш авто на торгах ───────────── */
+// Персона й правила — у коді (в адмінці лише вмикається/вимикається). Це жарт-розвага: реальних даних, цін чи гарантій ворожка не дає.
+const FORTUNE_CMD = /^\/(?:гадай|ворожка|гадалка|fortune|gadai)(?:@(\w+))?(?:\s+([\s\S]*))?$/i;
+const FORTUNE_RE = /(?:гада(?:й|ти|лк)|ворож|вгадай|передбач|напророч|пророч|кришталев|таро|виграю|виграємо|виграє|виграш|вигра(?:ти|в)\s+(?:лот|авто)|візьму\s+лот|ставка\s+(?:зайде|пройде)|зайде\s+ставка)/i;
+const FORTUNE_STYLE = `Ти — «Мадам Урбана», провидиця-ворожка при автоаукціонах Urban Auto. Ти «ворожиш» на виграш авто на торгах: дивишся в кришталеву кулю, карти, кавову гущу, ВІН-код і чек від аукціону.
+Говориш українською, жартівливо й нахабно: дерзка, самовпевнена, з іронією й підколками (на кшталт «ставку в останню секунду зробиш, як завжди», «знову гониш за дешевим лотом з розбитим усім», «фото ти, звісно, уважно роздивився?»). Можеш «нахамити» по-дружньому, але без справжніх образ.
+Формат: 2–4 речення, простий текст, 1–3 емодзі (🔮🃏☕🚗). Починай із ритуальної фрази («🔮 Карти шепочуть…», «Бачу в кулі…», «Кавова гуща каже…»). Дай чіткий «вердикт» за заданим нижче напрямком, з барвистою деталлю.
+ВАЖЛИВО: це лише жарт-розвага. Ти не маєш жодних реальних даних про лот, ціну, термін чи статус авто і НЕ вигадуєш їх; не називаєш реальних сум, номерів лотів, дат. Нічого не гарантуєш. Наприкінці коротко додай, що це жарт («ставку роби головою, а не кулею 😉» тощо).`;
+const VERDICTS = ['ВИГРАЄ — лот буде його, але з гучною дерзкою підколкою', 'ПРОГРАЄ — хтось поставить на секунду раніше, нахабно, але з гумором', 'ВИГРАЄ, АЛЕ ПЕРЕПЛАТИТЬ — торги підуть вище, ніж планував, і «збори» теж', 'ВИГРАЄ ЛИШЕ ЯКЩО НЕ БУДЕ ЖАДІБНИМ — треба вчасно зупинитись у ставках', 'ЗІРКИ МОВЧАТЬ — усе вирішить ставка в останню секунду; ворожка нахабно радить не панікувати'];
+const fortunePrompt = (cfg) => FORTUNE_STYLE + SAFETY_RULES;
+const FORTUNE_FALLBACKS = ['🔮 Куля запітніла — дихнули на неї обоє. Спробуй ще раз, а ставку роби головою 😉', '🃏 Карти розлетілись по кабінету. Збери їх і питай знову — це жарт, але ворожка ображається 😏'];
+
+async function runFortune(env, cfg, question) {
+  const verdict = VERDICTS[Math.floor(Math.random() * VERDICTS.length)];
+  const q = (question || '').trim().slice(0, 400) || 'Чи виграю я лот на аукціоні?';
+  return runModel(env, cfg.model, [
+    { role: 'system', content: fortunePrompt(cfg) },
+    { role: 'user', content: `Питання клієнта: ${q}\nВердикт ворожки (дотримуйся цього напрямку): ${verdict}` },
+  ]);
+}
+
 const FALLBACKS = ['Щось мені заціпило мізки 🤯 Спробуй трохи пізніше.', 'Я на секундочку задумався про сенс життя. Напиши ще раз 😅'];
 
 async function getCfg(env) {
@@ -36,13 +57,14 @@ async function getCfg(env) {
   const m = c.morning || {};
   return {
     enabled: c.enabled !== false, style: (c.style || '').trim() || DEFAULT_STYLE, model: c.model || env.AI_MODEL || DEFAULT_MODEL,
+    fortune: { enabled: (c.fortune || {}).enabled !== false },
     morning: { enabled: m.enabled !== false, time: /^([01]\d|2[0-3]):[0-5]\d$/.test(m.time) ? m.time : '09:50', weekdaysOnly: m.weekdaysOnly !== false },
   };
 }
 const systemPrompt = (cfg) => cfg.style + SAFETY_RULES;
 export async function adminAiGet(env) {
   const c = await getCfg(env);
-  return { enabled: c.enabled, style: c.style, model: c.model, morning: c.morning, defaultStyle: DEFAULT_STYLE, available: !!env.AI };
+  return { enabled: c.enabled, style: c.style, model: c.model, morning: c.morning, fortune: c.fortune, defaultStyle: DEFAULT_STYLE, available: !!env.AI };
 }
 const pickMorning = (m) => (m && typeof m === 'object' ? {
   ...(typeof m.enabled === 'boolean' ? { enabled: m.enabled } : {}),
@@ -57,6 +79,7 @@ export async function adminAiSet(env, body) {
     style: typeof body.style === 'string' ? body.style.trim().slice(0, 4000) : cur.style,
     model: typeof body.model === 'string' && /^@cf\/[\w./-]{3,100}$/.test(body.model) ? body.model : cur.model,
     morning: { ...cur.morning, ...pickMorning(body.morning) },
+    fortune: { enabled: body.fortune && typeof body.fortune.enabled === 'boolean' ? body.fortune.enabled : cur.fortune.enabled },
   };
   await env.DB.prepare("INSERT INTO kv (k, v) VALUES ('ai_cfg', ?1) ON CONFLICT(k) DO UPDATE SET v = ?1").bind(JSON.stringify(next)).run();
   return next;
@@ -74,8 +97,9 @@ async function runModel(env, model, messages) {
   return cleanReply(typeof text === 'string' ? text : JSON.stringify(text));
 }
 
-export async function adminAiTest(env, text) {
+export async function adminAiTest(env, text, fortune = false) {
   const c = await getCfg(env);
+  if (fortune) return { reply: await runFortune(env, c, String(text || '')), model: c.model, fortune: true };
   const messages = [{ role: 'system', content: systemPrompt(c) }, { role: 'user', content: String(text || '').slice(0, 500) }];
   const reply = await runModel(env, c.model, messages);
   return reply ? { reply, model: c.model } : { reply, model: c.model, raw: JSON.stringify(await env.AI.run(c.model, { messages, max_tokens: 260 })).slice(0, 800) };   // порожньо — показуємо сиру відповідь для діагностики
@@ -136,25 +160,37 @@ async function tgCall(env, method, body) {
 /** Повертає true, якщо повідомлення віддано ШІ-чату (тоді решта обробки пропускається). Відповідь готується у ctx.waitUntil. */
 export async function maybeChat(msg, env, ctx) {
   const text = (msg.text || '').trim();
-  if (!env.AI || !text || text.length > 1500 || msg.from?.is_bot || msg.business_connection_id || msg.forward_origin || msg.photo || msg.document || text.startsWith('/')) return false;
-  if ((text.match(/\p{L}/gu) || []).length < 4) return false;   // «+», «ок», «ні», смайлики — не привід відповідати (а «ну що ти?» — привід)
+  const botNameEarly = String(env.BOT_USERNAME || 'urbanauto_tracking_bot').toLowerCase();
+  const fcmd = text.match(FORTUNE_CMD);
+  if (fcmd && fcmd[1] && fcmd[1].toLowerCase() !== botNameEarly) return false;           // /гадай@інший_бот — не наше
+  if (!env.AI || !text || text.length > 1500 || msg.from?.is_bot || msg.business_connection_id || msg.forward_origin || msg.photo || msg.document || (text.startsWith('/') && !fcmd)) return false;
+  if (!fcmd && (text.match(/\p{L}/gu) || []).length < 4) return false;   // «+», «ок», «ні», смайлики — не привід відповідати (а «ну що ти?» — привід)
   if (VIN_RE.test(text) || /cargoplus\.pro/i.test(text) || /^\s*(?:📍\s*)?Статус\s*:/im.test(text)) return false;     // це повідомлення для трекінгу
   const botId = Number(String(env.BOT_TOKEN).split(':')[0]);
   const botName = String(env.BOT_USERNAME || 'urbanauto_tracking_bot').toLowerCase();
   const chat = msg.chat, isPrivate = chat.type === 'private';
   const toBot = msg.reply_to_message?.from?.id === botId;
   const mentioned = text.toLowerCase().includes('@' + botName);
-  if (!(isPrivate || toBot || mentioned)) return false;
+  if (!(isPrivate || toBot || mentioned || fcmd)) return false;
   // у відповідь на свій же службовий пост у робочій групі теж відповідаємо, але не втручаємось в особисту роботу з договором
   if (isPrivate && await env.DB.prepare('SELECT 1 FROM kv WHERE k = ?1').bind(`cdraft:${chat.id}`).first()) return false;
   const cfg = await getCfg(env);
   if (!cfg.enabled) return false;
+  const fortune = cfg.fortune.enabled && (!!fcmd || FORTUNE_RE.test(text));
+  if (fcmd && !cfg.fortune.enabled) return false;
 
   ctx.waitUntil((async () => {
     try {
       if (!(await allowed(env, chat.id, msg.from?.id || chat.id, !isPrivate))) return;
       await tgCall(env, 'sendChatAction', { chat_id: chat.id, action: 'typing' }).catch(() => {});
-      const userText = text.replace(new RegExp('@' + botName, 'ig'), '').trim().slice(0, 500) || 'привіт';
+      const userText = (fcmd ? (fcmd[2] || '') : text).replace(new RegExp('@' + botName, 'ig'), '').trim().slice(0, 500) || (fortune ? '' : 'привіт');
+      if (fortune) {
+        let ans = '';
+        try { ans = await runFortune(env, cfg, userText); } catch (e) { console.error('fortune', String(e).slice(0, 200)); }
+        if (!ans) { if (!isPrivate && !fcmd) return; ans = FORTUNE_FALLBACKS[Math.floor(Math.random() * FORTUNE_FALLBACKS.length)]; }
+        await tgCall(env, 'sendMessage', { chat_id: chat.id, text: ans, message_thread_id: msg.message_thread_id, reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } });
+        return;
+      }
       const messages = [{ role: 'system', content: systemPrompt(cfg) }];
       let hist = [];
       if (isPrivate) { hist = await loadHistory(env, chat.id); messages.push(...hist); }

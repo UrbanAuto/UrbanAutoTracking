@@ -137,7 +137,7 @@ async function tgCall(env, method, body) {
 export async function maybeChat(msg, env, ctx) {
   const text = (msg.text || '').trim();
   if (!env.AI || !text || text.length > 1500 || msg.from?.is_bot || msg.business_connection_id || msg.forward_origin || msg.photo || msg.document || text.startsWith('/')) return false;
-  if (!/\p{L}{3,}/u.test(text)) return false;                  // «+», «ок», смайлики — не привід відповідати
+  if ((text.match(/\p{L}/gu) || []).length < 4) return false;   // «+», «ок», «ні», смайлики — не привід відповідати (а «ну що ти?» — привід)
   if (VIN_RE.test(text) || /cargoplus\.pro/i.test(text) || /^\s*(?:📍\s*)?Статус\s*:/im.test(text)) return false;     // це повідомлення для трекінгу
   const botId = Number(String(env.BOT_TOKEN).split(':')[0]);
   const botName = String(env.BOT_USERNAME || 'urbanauto_tracking_bot').toLowerCase();
